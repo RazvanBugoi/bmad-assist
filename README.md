@@ -119,30 +119,69 @@ bmad-assist run --project /path/to/your/project
 
 **Note:** Workflows are bundled with bmad-assist. No need to copy `_bmad/` directory anymore.
 
-## The `init` Command (Optional)
+## The `init` Command (Recommended)
 
-The `bmad-assist init` command prepares your project for use with bmad-assist. **It's optional** - the `run` command will create necessary directories automatically. However, `init` is recommended for proper `.gitignore` setup.
+The `bmad-assist init` command prepares your project for bmad-assist with full configuration.
 
 ```bash
 bmad-assist init                    # Initialize current directory
 bmad-assist init -p ./my-project    # Initialize specific project
-bmad-assist init --dry-run          # Preview changes without applying
+bmad-assist init --dry-run          # Preview changes
+bmad-assist init --reset-workflows  # Restore bundled workflow versions
 ```
 
 **What it does:**
+- Creates `.bmad-assist/` directory (state, cache, patches)
+- Copies bundled BMAD workflows to `_bmad/bmm/workflows/`
+- Updates `.gitignore` with required patterns
+- Creates minimal BMAD config if missing
 
-1. **Creates `.bmad-assist/` directory** - Stores internal state, cache, and patches
-2. **Updates `.gitignore`** - Adds patterns to prevent committing generated artifacts:
-   - `.bmad-assist/` (internal state)
-   - `_bmad-output/` (generated stories, validations, reviews)
-3. **Validates bundled workflows** - Checks that all required workflows are available
+### `init` vs `run`
 
-**`init` vs `run`:**
-- `run` automatically creates `.bmad-assist/` and output directories
-- `init` additionally sets up `.gitignore` and validates workflows
-- Run `init` once to set up `.gitignore`, then use `run` normally
+| Action | `run` | `init` |
+|--------|-------|--------|
+| Create directories | ✓ | ✓ |
+| Copy bundled workflows | ✓ | ✓ |
+| Create BMAD config | ✓ | ✓ |
+| Update `.gitignore` | ✗ | ✓ |
+| Prompt on file differences | ✓ | ✓ |
 
-The command is **idempotent** - safe to run multiple times.
+**TL;DR:** `run` works out-of-the-box. Use `init` once for proper git setup.
+
+### File Conflict Handling
+
+When local workflows differ from bundled versions, you'll see:
+
+```
+3 workflow file(s) differ from bundled version:
+  - create-story/workflow.yaml
+  - dev-story/instructions.md
+  - ...
+
+What would you like to do? [a/s/i/d/?] (s): ?
+
+Options:
+  [a] Overwrite ALL - replace all differing files
+  [s] Skip all     - keep your local versions (default)
+  [i] Interactive  - prompt for each file
+  [d] Show diff    - display differences
+  [?] Help         - show this message
+```
+
+### Configuration Options
+
+Suppress gitignore warnings in `bmad-assist.yaml`:
+
+```yaml
+warnings:
+  suppress_gitignore: true
+```
+
+### Exit Codes
+
+- `0` - Success
+- `1` - Error
+- `2` - Success with warnings (workflows skipped due to local modifications)
 
 ### Try It Out
 

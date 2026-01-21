@@ -876,6 +876,18 @@ class SprintConfig(BaseModel):
     )
 
 
+class WarningsConfig(BaseModel):
+    """Warning suppression configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    suppress_gitignore: bool = Field(
+        default=False,
+        description="Suppress gitignore configuration warnings during run/init",
+        json_schema_extra={"security": "safe", "ui_widget": "checkbox"},
+    )
+
+
 class Config(BaseModel):
     """Main bmad-assist configuration model.
 
@@ -944,6 +956,10 @@ class Config(BaseModel):
     loop: LoopConfig | None = Field(
         default=None,
         description="Loop phase configuration (optional, uses DEFAULT_LOOP_CONFIG if not set)",
+    )
+    warnings: WarningsConfig | None = Field(
+        default=None,
+        description="Warning suppression configuration (optional)",
     )
     workflow_variant: str = Field(
         default="default",

@@ -14,7 +14,8 @@ from rich.logging import RichHandler
 # Exit codes following Unix conventions
 EXIT_SUCCESS: int = 0
 EXIT_ERROR: int = 1  # General error (file not found, etc.)
-EXIT_CONFIG_ERROR: int = 2  # Configuration/usage error
+EXIT_CONFIG_ERROR: int = 2  # Configuration/usage error (compile, etc.)
+EXIT_WARNING: int = 2  # Success with warnings (run/init - workflows skipped)
 EXIT_SIGINT: int = 130  # 128 + SIGINT (2) - Interrupted by Ctrl+C
 EXIT_SIGTERM: int = 143  # 128 + SIGTERM (15) - Terminated by kill signal
 

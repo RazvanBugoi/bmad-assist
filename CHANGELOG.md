@@ -2,6 +2,25 @@
 
 All notable changes to bmad-assist are documented in this file.
 
+## [0.4.5] - 2026-01-21
+
+### Added
+- Project setup consolidation - `init` and `run` now copy bundled workflows
+- Batch overwrite prompt `[a/s/i/d/?]` when local workflows differ from bundled
+- `--reset-workflows` flag for `init` command to restore bundled versions
+- `warnings.suppress_gitignore` config option to silence gitignore warnings
+- Exit code 2 for "success with warnings" (workflows skipped in CI)
+
+### Changed
+- `init` command refactored to use shared `ensure_project_setup()` logic
+- `run` command now performs implicit project setup (without gitignore changes)
+- File copy uses atomic write with rollback on partial failure
+
+### Security
+- Path traversal protection in workflow copying
+- Symlinks not followed during file operations
+- Temp files created with 0o644 permissions
+
 ## [0.4.4] - 2026-01-21
 
 ### Added

@@ -21,6 +21,7 @@ from bmad_assist.cli_utils import (
     EXIT_SIGINT,
     EXIT_SIGTERM,
     EXIT_SUCCESS,
+    EXIT_WARNING,
     _error,
     _info,
     _setup_logging,
@@ -425,6 +426,28 @@ def run(
         project_paths.ensure_directories()
         logger.debug("Project paths initialized: %s", project_paths)
 
+        # Implicit project setup (without gitignore modification)
+        from bmad_assist.core.project_setup import check_gitignore_warning, ensure_project_setup
+
+        setup_result = ensure_project_setup(
+            project_path,
+            include_gitignore=False,  # run never modifies gitignore
+            force=no_interactive,  # In non-interactive, skip differing files silently
+            console=console if not quiet else None,
+        )
+
+        # Show gitignore warning (respects config)
+        if not quiet:
+            check_gitignore_warning(project_path, loaded_config, console)
+
+        # CI-friendly: warn about skipped files
+        if setup_result.has_skipped:
+            _warning(
+                f"{len(setup_result.workflows_skipped)} workflow(s) skipped (local differs from bundled)"
+            )
+            if no_interactive:
+                _info("Run interactively or use 'bmad-assist init --reset-workflows' to update")
+
         # Validate sprint-status.yaml exists (CRITICAL: fail early with clear error)
         sprint_path = project_paths.find_sprint_status()
         if sprint_path is None:
@@ -517,6 +540,10 @@ def run(
         # COMPLETED exit reason - show success message
         # Final success message always shown (AC11 - quiet mode shows final result)
         _success("Completed successfully")
+
+        # Exit with code 2 if workflows were skipped (CI warning)
+        if setup_result.has_skipped:
+            raise typer.Exit(code=EXIT_WARNING)
 
     except ConfigError as e:
         _error(str(e))
