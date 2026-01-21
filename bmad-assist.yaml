@@ -29,18 +29,15 @@ providers:
 
   # Additional providers for multi-provider scenarios
   multi:
-    # - provider: claude-subprocess
-    #   model: opus
-    # - provider: claude-subprocess
-    #   model: opus
+    # Gemini providers
     - provider: gemini
       model: gemini-3-pro-preview
-    # - provider: gemini
-    #   model: gemini-3-flash-preview
     - provider: gemini
       model: gemini-3-flash-preview
     - provider: gemini
       model: gemini-2.5-flash
+
+    # Claude subprocess providers
     - provider: claude-subprocess
       model: sonnet
       model_name: glm-4.7
@@ -49,14 +46,61 @@ providers:
       model: sonnet
       model_name: glm-4.7
       settings: ~/.claude/glm.json
-    # - provider: claude-subprocess
-    #   model: sonnet
-    #   model_name: glm-4.7
-    #   settings: ~/.claude/glm.json
+
+    # OpenCode providers (NEW)
+    # - provider: opencode
+    #   model: opencode/claude-sonnet-4       # Claude Sonnet 4 via OpenCode
+    # - provider: opencode
+    #   model: opencode/claude-opus-4-5       # Claude Opus 4.5 via OpenCode
+    # - provider: opencode
+    #   model: zai-coding-plan/glm-4.7        # GLM 4.7 via Z.ai
+    # - provider: opencode
+    #   model: xai/grok-4                     # Grok 4 via xAI
+    # - provider: opencode
+    #   model: opencode/gemini-3-flash        # Gemini 3 Flash via OpenCode
+    # - provider: opencode
+    #   model: opencode/gemini-3-pro          # Gemini 3 Pro via OpenCode
+
+    # Amp providers (NEW) - Sourcegraph's Claude wrapper
+    # Note: Amp uses "modes" instead of model names
+    # WARNING: Only "smart" mode works with bmad-assist (rush/free lack tool use)
+    # - provider: amp
+    #   model: smart                          # Claude Opus 4.5 (most capable)
+
+# Compiler configuration
+compiler:
+  # patch_path: .bmad-assist/patches  # Custom patch files directory
+
+  # Source context collection for workflow prompts
+  source_context:
+    # Per-workflow token budgets (0-99 = disabled)
+    budgets:
+      create_story: 20000
+      validate_story: 0          # Disabled - validation doesn't need source files
+      validate_story_synthesis: 0
+      dev_story: 20000
+      code_review: 15000
+      code_review_synthesis: 15000
+      default: 20000             # Fallback for unlisted workflows
+
+    # File prioritization scoring weights
+    scoring:
+      in_file_list: 50           # Bonus for files in story's File List
+      in_git_diff: 50            # Bonus for files in git diff
+      is_test_file: -10          # Penalty for test files
+      is_config_file: -5         # Penalty for config files (.yaml, .json, etc.)
+      change_lines_factor: 1     # Points per changed line
+      change_lines_cap: 50       # Max points from change_lines
+
+    # Content extraction settings
+    extraction:
+      adaptive_threshold: 0.25   # If file_tokens > (budget/files)*threshold → hunks only
+      hunk_context_lines: 20     # Min context lines around changes
+      hunk_context_scale: 0.3    # Context = max(hunk_context_lines, changes * scale)
+      max_files: 15              # Hard cap on files (prevents budget dilution)
 
 benchmarking:
   enabled: true
-
 
 notifications:
   enabled: true
