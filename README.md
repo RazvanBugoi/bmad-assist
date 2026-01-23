@@ -57,7 +57,7 @@ BMAD (Brian's Methodology for AI-Driven Development) is a structured approach to
 
 ## Features
 
-- **Multi-LLM Orchestration** - Run parallel validations/reviews with Claude Code, Gemini CLI, Codex, OpenCode, Amp
+- **Multi-LLM Orchestration** - Run parallel validations/reviews with Claude Code, Gemini CLI, Codex, OpenCode, Amp, Cursor Agent, GitHub Copilot
 - **Evidence Score System** - Mathematical validation scoring (CRITICAL/IMPORTANT/MINOR) with anti-bias checks
 - **Workflow Compiler** - Transform BMAD workflows into optimized standalone prompts
 - **Patch System** - Customize workflows per-project without forking
