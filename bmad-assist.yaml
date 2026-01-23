@@ -12,8 +12,15 @@ user_skill_level: expert
 #   project_knowledge: /shared/docs/my-project    # PRD, architecture, epics
 #   output_folder: /data/bmad-output/my-project   # generated artifacts
 
-timeout: 3600
-
+# Per-phase timeout configuration (seconds)
+timeouts:
+  default: 600
+  create_story: 900
+  dev_story: 3600
+  code_review: 900
+  code_review_synthesis: 900
+  retrospective: 900
+  
 providers:
   master:
     provider: claude-subprocess
@@ -36,7 +43,11 @@ providers:
       model: gemini-3-flash-preview
     - provider: gemini
       model: gemini-2.5-flash
-
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
+      
     # Claude subprocess providers
     - provider: claude-subprocess
       model: sonnet
@@ -76,9 +87,9 @@ compiler:
     # Per-workflow token budgets (0-99 = disabled)
     budgets:
       create_story: 20000
-      validate_story: 0          # Disabled - validation doesn't need source files
-      validate_story_synthesis: 0
-      dev_story: 20000
+      validate_story: 10000
+      validate_story_synthesis: 10000
+      dev_story: 15000
       code_review: 15000
       code_review_synthesis: 15000
       default: 20000             # Fallback for unlisted workflows
