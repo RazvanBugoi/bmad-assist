@@ -2,6 +2,12 @@
 
 All notable changes to bmad-assist are documented in this file.
 
+## [0.4.7] - 2026-01-23
+
+### Added
+- **Cursor Agent provider** for Multi-LLM orchestration (subprocess-based)
+- **GitHub Copilot provider** for Multi-LLM orchestration (subprocess-based)
+
 ## [0.4.6] - 2026-01-23
 
 ### Added
