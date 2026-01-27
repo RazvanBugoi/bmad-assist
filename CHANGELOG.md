@@ -2,6 +2,21 @@
 
 All notable changes to bmad-assist are documented in this file.
 
+## [0.4.11] - 2026-01-27
+
+### Added
+- **Per-phase model configuration** (`phase_models`) - specify different LLM providers/models for each workflow phase
+  - Single-LLM phases: object format with `provider`, `model`, `model_name`, `settings`
+  - Multi-LLM phases: array format with full control over validator/reviewer list
+  - Phases not in `phase_models` fall back to global `providers` config
+  - Settings path validation with tilde expansion
+- **23 unit tests** for phase_models validation, resolution, and fallback behavior
+- **Documentation** for per-phase configuration in `docs/configuration.md`
+
+### Changed
+- **Breaking:** When `phase_models` defines a multi-LLM phase (`validate_story`, `code_review`), master is NOT auto-added - user has full control over the list
+- When falling back to global `providers.multi` (no phase_models override), master IS still auto-added (existing behavior preserved)
+
 ## [0.4.10] - 2026-01-27
 
 ### Added

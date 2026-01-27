@@ -52,7 +52,10 @@ from bmad_assist.core.config.loop_config import (
 
 # Models (all from models/)
 from bmad_assist.core.config.models import (
+    ALL_KNOWN_PHASES,
     DEFAULT_LOOP_CONFIG,
+    MULTI_LLM_PHASES,
+    SINGLE_LLM_PHASES,
     BenchmarkingConfig,
     BmadPathsConfig,
     CompilerConfig,
@@ -61,6 +64,7 @@ from bmad_assist.core.config.models import (
     LoopConfig,
     MasterProviderConfig,
     MultiProviderConfig,
+    PhaseModelsConfig,
     PlaywrightConfig,
     PlaywrightServerConfig,
     PowerPromptConfig,
@@ -81,6 +85,7 @@ from bmad_assist.core.config.models import (
     _create_story_defaults,
     _validate_story_defaults,
     _validate_story_synthesis_defaults,
+    get_phase_provider_config,
 )
 
 # Schema (Dashboard)
@@ -117,6 +122,12 @@ __all__ = [
     "MultiProviderConfig",
     "HelperProviderConfig",
     "ProviderConfig",
+    "PhaseModelsConfig",
+    # Phase constants
+    "SINGLE_LLM_PHASES",
+    "MULTI_LLM_PHASES",
+    "ALL_KNOWN_PHASES",
+    "get_phase_provider_config",
     # Models - Paths
     "PowerPromptConfig",
     "BmadPathsConfig",

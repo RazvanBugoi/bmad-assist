@@ -173,7 +173,7 @@ bmad-assist uses different LLM patterns depending on the workflow phase:
 - **Creation & Implementation** need single source of truth - multiple writers cause conflicts
 - **Synthesis** consolidates parallel outputs into actionable decisions
 
-> **Planned:** Per-workflow model configuration - ability to specify different models for each phase (e.g., Opus for dev_story, GLM 4.7 for synthesis).
+**Per-Phase Model Configuration:** You can specify different models for each phase - use powerful models for critical phases, faster models for synthesis. See [Configuration Reference](docs/configuration.md#per-phase-model-configuration) for details.
 
 ## Development
 

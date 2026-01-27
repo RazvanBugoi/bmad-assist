@@ -18,7 +18,11 @@ from bmad_assist.core.config.models.paths import (
     PowerPromptConfig,
     ProjectPathsConfig,
 )
-from bmad_assist.core.config.models.providers import ProviderConfig
+from bmad_assist.core.config.models.providers import (
+    PhaseModelsConfig,
+    ProviderConfig,
+    parse_phase_models,
+)
 from bmad_assist.notifications.config import NotificationConfig
 from bmad_assist.testarch.config import TestarchConfig
 
@@ -56,6 +60,13 @@ class Config(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     providers: ProviderConfig
+    phase_models: PhaseModelsConfig | None = Field(
+        default=None,
+        description="Per-phase provider configuration overrides. "
+        "Single-LLM phases accept object {provider, model, model_name?, settings?}. "
+        "Multi-LLM phases accept array of objects.",
+        json_schema_extra={"security": "risky"},
+    )
     power_prompts: PowerPromptConfig = Field(default_factory=PowerPromptConfig)
     state_path: str | None = Field(
         default=None,
@@ -109,6 +120,54 @@ class Config(BaseModel):
         description="Workflow variant identifier for A/B testing",
         json_schema_extra={"security": "safe", "ui_widget": "text"},
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_raw_phase_models(cls, data: dict) -> dict:
+        """Parse raw phase_models dict into typed config before Pydantic validation.
+
+        Pydantic can't auto-discriminate dict vs list union types, so we need
+        to explicitly parse the raw YAML into MasterProviderConfig or
+        list[MultiProviderConfig] based on phase category.
+
+        If phase_models values are already typed (e.g., passed directly in code),
+        skip parsing and return as-is.
+        """
+        from bmad_assist.core.config.models.providers import (
+            MasterProviderConfig,
+            MultiProviderConfig,
+        )
+
+        if not isinstance(data, dict):
+            return data
+
+        raw_phase_models = data.get("phase_models")
+        if raw_phase_models is None:
+            return data
+
+        if not isinstance(raw_phase_models, dict):
+            return data
+
+        # Check if ALL values are already typed (not raw dicts)
+        # If any value is a raw dict, we need to parse; if all typed, skip
+        all_typed = True
+        for value in raw_phase_models.values():
+            if isinstance(value, MasterProviderConfig):
+                continue  # Already typed single-LLM
+            elif isinstance(value, list) and value and isinstance(value[0], MultiProviderConfig):
+                continue  # Already typed multi-LLM
+            else:
+                # Raw dict or empty list - needs parsing
+                all_typed = False
+                break
+
+        if all_typed:
+            return data
+
+        # Parse raw dicts into typed config
+        data["phase_models"] = parse_phase_models(raw_phase_models)
+
+        return data
 
     @model_validator(mode="after")
     def expand_state_path(self) -> Self:

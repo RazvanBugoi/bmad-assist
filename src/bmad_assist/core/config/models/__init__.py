@@ -26,10 +26,15 @@ from bmad_assist.core.config.models.paths import (
     ProjectPathsConfig,
 )
 from bmad_assist.core.config.models.providers import (
+    ALL_KNOWN_PHASES,
+    MULTI_LLM_PHASES,
+    SINGLE_LLM_PHASES,
     HelperProviderConfig,
     MasterProviderConfig,
     MultiProviderConfig,
+    PhaseModelsConfig,
     ProviderConfig,
+    get_phase_provider_config,
 )
 from bmad_assist.core.config.models.source_context import (
     SourceContextBudgetsConfig,
@@ -53,6 +58,11 @@ __all__ = [
     "MultiProviderConfig",
     "HelperProviderConfig",
     "ProviderConfig",
+    "PhaseModelsConfig",
+    "SINGLE_LLM_PHASES",
+    "MULTI_LLM_PHASES",
+    "ALL_KNOWN_PHASES",
+    "get_phase_provider_config",
     # paths.py
     "PowerPromptConfig",
     "BmadPathsConfig",

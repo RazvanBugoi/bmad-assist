@@ -31,6 +31,11 @@ import yaml
 from jinja2 import Template
 
 from bmad_assist.core.config import Config, get_phase_timeout
+from bmad_assist.core.config.models.providers import (
+    MasterProviderConfig,
+    MultiProviderConfig,
+    get_phase_provider_config,
+)
 from bmad_assist.core.exceptions import ConfigError, ProviderExitCodeError
 from bmad_assist.core.io import get_original_cwd
 from bmad_assist.core.loop.types import PhaseResult
@@ -478,8 +483,24 @@ class BaseHandler(ABC):
         handler_config = self.load_config()
         return handler_config.provider_type
 
+    def _get_phase_config(self) -> MasterProviderConfig | list[MultiProviderConfig]:
+        """Get provider config for this phase using phase_models resolution.
+
+        Uses get_phase_provider_config() which checks phase_models first,
+        then falls back to global providers.master/multi.
+
+        Returns:
+            MasterProviderConfig for single-LLM phases,
+            list[MultiProviderConfig] for multi-LLM phases.
+
+        """
+        return get_phase_provider_config(self.config, self.phase_name)
+
     def get_provider(self) -> BaseProvider:
         """Get the provider instance based on handler config.
+
+        Uses phase_models if configured for this phase, otherwise
+        falls back to global providers.
 
         Returns:
             Provider instance (master, helper, or first multi provider).
@@ -487,59 +508,76 @@ class BaseHandler(ABC):
         """
         provider_type = self._get_provider_type()
 
-        if provider_type == "master":
-            provider_name = self.config.providers.master.provider
-        elif provider_type == "helper":
-            # Helper provider for benchmarking extraction
+        # Helper provider bypasses phase_models - always use global config
+        if provider_type == "helper":
             if not self.config.providers.helper:
                 raise ConfigError("Helper provider not configured")
             provider_name = self.config.providers.helper.provider
-        else:
-            # For multi, use first provider in list
-            if not self.config.providers.multi:
+            return get_provider(provider_name)
+
+        # Use phase_models resolution for master and multi
+        phase_config = self._get_phase_config()
+
+        if isinstance(phase_config, list):
+            # Multi-LLM: BaseHandler uses first provider
+            if not phase_config:
                 raise ConfigError("No multi providers configured")
-            provider_name = self.config.providers.multi[0].provider
+            provider_name = phase_config[0].provider
+        else:
+            # Single-LLM: use directly
+            provider_name = phase_config.provider
 
         return get_provider(provider_name)
 
     def get_model(self) -> str | None:
-        """Get the display model name for logging (prefers model_name over model)."""
+        """Get the display model name for logging (prefers model_name over model).
+
+        Uses phase_models if configured for this phase.
+        """
         provider_type = self._get_provider_type()
 
-        if provider_type == "master":
-            master = self.config.providers.master
-            # Prefer model_name for display (e.g., "glm-4-7")
-            if master.model_name:
-                return master.model_name
-            return master.model
-        elif provider_type == "helper":
+        # Helper bypasses phase_models
+        if provider_type == "helper":
             helper = self.config.providers.helper
             if helper:
-                if helper.model_name:
-                    return helper.model_name
-                return helper.model
+                return helper.model_name or helper.model
             return None
-        else:
-            if not self.config.providers.multi:
+
+        # Use phase_models resolution
+        phase_config = self._get_phase_config()
+
+        if isinstance(phase_config, list):
+            # Multi-LLM: use first provider
+            if not phase_config:
                 return None
-            multi = self.config.providers.multi[0]
-            if multi.model_name:
-                return multi.model_name
-            return multi.model
+            return phase_config[0].model_name or phase_config[0].model
+        else:
+            # Single-LLM: use directly
+            return phase_config.model_name or phase_config.model
 
     def get_cli_model(self) -> str | None:
-        """Get the CLI model identifier for provider invocation (always returns model, not model_name).""" # noqa: E501
+        """Get the CLI model identifier for provider invocation (always model, not model_name).
+
+        Uses phase_models if configured for this phase.
+        """
         provider_type = self._get_provider_type()
 
-        if provider_type == "master":
-            return self.config.providers.master.model
-        elif provider_type == "helper":
+        # Helper bypasses phase_models
+        if provider_type == "helper":
             helper = self.config.providers.helper
             return helper.model if helper else None
-        else:
-            if not self.config.providers.multi:
+
+        # Use phase_models resolution
+        phase_config = self._get_phase_config()
+
+        if isinstance(phase_config, list):
+            # Multi-LLM: use first provider
+            if not phase_config:
                 return None
-            return self.config.providers.multi[0].model
+            return phase_config[0].model
+        else:
+            # Single-LLM: use directly
+            return phase_config.model
 
     def invoke_provider(
         self, prompt: str, retry_timeout_minutes: int = 30, retry_delay: int = 60
@@ -566,15 +604,23 @@ class BaseHandler(ABC):
         cli_model = self.get_cli_model()  # For actual CLI invocation (always model)
         timeout = get_phase_timeout(self.config, self.phase_name)
 
-        # Resolve settings file from provider config
+        # Resolve settings file from provider config (phase_models or global)
         settings_file = None
         provider_type = self._get_provider_type()
-        if provider_type == "master":
-            settings_file = self.config.providers.master.settings_path
-        elif provider_type == "multi" and self.config.providers.multi:
-            settings_file = self.config.providers.multi[0].settings_path
-        elif provider_type == "helper" and self.config.providers.helper:
+
+        # Helper bypasses phase_models
+        if provider_type == "helper" and self.config.providers.helper:
             settings_file = self.config.providers.helper.settings_path
+        else:
+            # Use phase_models resolution for master and multi
+            phase_config = self._get_phase_config()
+            if isinstance(phase_config, list):
+                # Multi-LLM: use first provider
+                if phase_config:
+                    settings_file = phase_config[0].settings_path
+            else:
+                # Single-LLM: use directly
+                settings_file = phase_config.settings_path
 
         logger.info(
             "Invoking %s provider with model=%s, timeout=%s, cwd=%s",

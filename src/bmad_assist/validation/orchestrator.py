@@ -48,6 +48,10 @@ from bmad_assist.benchmarking import (
 from bmad_assist.compiler import compile_workflow
 from bmad_assist.compiler.types import CompilerContext
 from bmad_assist.core.config import Config, get_phase_timeout
+from bmad_assist.core.config.models.providers import (
+    MultiProviderConfig,
+    get_phase_provider_config,
+)
 from bmad_assist.core.exceptions import BmadAssistError
 from bmad_assist.core.io import get_original_cwd, save_prompt
 
@@ -473,10 +477,15 @@ async def run_validation_phase(
     # Type now includes DeterministicMetrics as 3rd element (AC1)
     tasks: list[asyncio.Task[_ValidatorResult]] = []
 
-    # Add multi providers
+    # Add multi providers (from phase_models if configured, else global providers.multi)
     # Restrict tools to prevent file modification (only TodoWrite allowed)
     # Color index based on provider order for visual distinction
-    for idx, multi_config in enumerate(config.providers.multi):
+    multi_configs_raw = get_phase_provider_config(config, "validate_story")
+    # Type narrowing: validate_story is multi-LLM, so must be list
+    multi_configs: list[MultiProviderConfig] = (
+        multi_configs_raw if isinstance(multi_configs_raw, list) else []
+    )
+    for idx, multi_config in enumerate(multi_configs):
         provider = get_provider(multi_config.provider)
         # Use display_model (model_name if set) for logging, model for CLI invocation
         provider_id = f"{multi_config.provider}-{multi_config.display_model}"
@@ -500,30 +509,36 @@ async def run_validation_phase(
         )
         tasks.append(task)
 
-    # Add master as validator (also restricted during validation phase)
-    # Master gets next color index after all multi providers
-    master_provider = get_provider(config.providers.master.provider)
-    master_id = f"master-{config.providers.master.display_model}"
-    master_color_index = len(config.providers.multi)
-    master_task = asyncio.create_task(
-        _invoke_validator(
-            master_provider,
-            prompt,
-            timeout,
-            master_id,
-            model=config.providers.master.model,
-            allowed_tools=_VALIDATOR_ALLOWED_TOOLS,
-            run_timestamp=run_timestamp,
-            epic_num=epic_num,
-            story_num=story_num,
-            benchmarking_enabled=benchmarking_enabled,
-            settings_file=config.providers.master.settings_path,
-            color_index=master_color_index,
-            cwd=project_path,
-            display_model=config.providers.master.display_model,
+    # Add master as validator ONLY when using global providers.multi fallback
+    # When phase_models.validate_story is defined, user has full control - no auto-add
+    phase_has_override = config.phase_models and "validate_story" in config.phase_models
+    if not phase_has_override:
+        master_provider = get_provider(config.providers.master.provider)
+        master_id = f"master-{config.providers.master.display_model}"
+        master_color_index = len(multi_configs)
+        master_task = asyncio.create_task(
+            _invoke_validator(
+                master_provider,
+                prompt,
+                timeout,
+                master_id,
+                model=config.providers.master.model,
+                allowed_tools=_VALIDATOR_ALLOWED_TOOLS,
+                run_timestamp=run_timestamp,
+                epic_num=epic_num,
+                story_num=story_num,
+                benchmarking_enabled=benchmarking_enabled,
+                settings_file=config.providers.master.settings_path,
+                color_index=master_color_index,
+                cwd=project_path,
+                display_model=config.providers.master.display_model,
+            )
         )
-    )
-    tasks.append(master_task)
+        tasks.append(master_task)
+    else:
+        logger.debug(
+            "phase_models.validate_story defined - master NOT auto-added"
+        )
 
     logger.info("Invoking %d validators in parallel", len(tasks))
 

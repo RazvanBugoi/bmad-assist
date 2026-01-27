@@ -90,6 +90,76 @@ providers:
     # - provider: copilot
     #   model: claude-haiku-4.5                         # Default model
 
+
+# Per-Phase Model Configuration
+phase_models:
+  # Single-LLM phases - object format
+  create_story:
+    provider: claude-subprocess
+    model: opus
+  validate_story_synthesis:
+    provider: claude-subprocess
+    model: opus
+    model_name: glm-4.7
+    settings: ~/.claude/glm.json
+  dev_story:
+    provider: claude-subprocess
+    model: opus
+  code_review_synthesis:
+    provider: claude-subprocess
+    model: opus
+    model_name: glm-4.7
+    settings: ~/.claude/glm.json
+  retrospective:
+    provider: claude-subprocess
+    model: opus
+    model_name: glm-4.7
+    settings: ~/.claude/glm.json
+
+  # Multi-LLM phases - array format
+  # When phase_models defines a multi-LLM phase, ONLY the listed providers are used.
+  # Master is NOT auto-added - you have full control over the validator/reviewer list.
+  validate_story:
+    - provider: gemini
+      model: gemini-3-pro-preview
+    - provider: gemini
+      model: gemini-3-flash-preview
+    - provider: gemini
+      model: gemini-2.5-flash
+    - provider: gemini
+      model: gemini-2.5-flash-lite
+    - provider: gemini
+      model: gemini-2.5-flash-lite
+    - provider: claude-subprocess
+      model: sonnet
+      model_name: glm-4.7
+      settings: ~/.claude/glm.json
+    - provider: claude-subprocess
+      model: sonnet
+      model_name: glm-4.7
+      settings: ~/.claude/glm.json
+  # Same for code_review - full control over reviewer list
+  code_review:
+    - provider: gemini
+      model: gemini-3-pro-preview
+    - provider: gemini
+      model: gemini-3-flash-preview
+    - provider: gemini
+      model: gemini-2.5-flash
+    - provider: gemini
+      model: gemini-2.5-flash-lite
+    - provider: gemini
+      model: gemini-2.5-flash-lite
+    - provider: claude-subprocess
+      model: sonnet
+      model_name: glm-4.7
+      settings: ~/.claude/glm.json
+    - provider: claude-subprocess
+      model: sonnet
+      model_name: glm-4.7
+      settings: ~/.claude/glm.json
+
+
 # Compiler configuration
 compiler:
   # patch_path: .bmad-assist/patches  # Custom patch files directory
@@ -129,17 +199,19 @@ compiler:
 
     # Default settings for all workflows
     defaults:
-      include: [project-context] # Doc types to include (order matters)
+      include: [project-context, architecture] # Doc types to include (order matters)
       main_only: true            # For sharded docs: load only index.md
 
     # Per-workflow overrides (null fields inherit from defaults)
-    create_story:                # Needs full context for story creation
-      include: [project-context, prd, architecture, ux]
-    validate_story:              # Story + architecture alignment
-      include: [project-context, architecture]
-    validate_story_synthesis:    # Minimal - aggregates validator outputs
-      include: [project-context]
-    # dev_story, code_review, code_review_synthesis use defaults
+    create_story:
+      include: [project-context, architecture, ux, prd]
+    validate_story:
+      include: [project-context, architecture, ux, prd]
+    dev_story:
+      include: [project-context, architecture, ux, prd]
+    code_review:
+      include: [project-context, architecture, ux]
+
 
 benchmarking:
   enabled: true

@@ -46,6 +46,10 @@ from bmad_assist.benchmarking import (
 from bmad_assist.compiler import compile_workflow
 from bmad_assist.compiler.types import CompilerContext
 from bmad_assist.core.config import Config, get_phase_timeout
+from bmad_assist.core.config.models.providers import (
+    MultiProviderConfig,
+    get_phase_provider_config,
+)
 from bmad_assist.core.exceptions import BmadAssistError
 from bmad_assist.core.extraction import CODE_REVIEW_MARKERS, extract_report
 from bmad_assist.core.io import get_original_cwd, save_prompt
@@ -544,9 +548,14 @@ async def run_code_review_phase(
 
     tasks: list[asyncio.Task[_ReviewerResult]] = []
 
-    # Add multi providers
+    # Add multi providers (from phase_models if configured, else global providers.multi)
     # Color index based on provider order for visual distinction
-    for idx, multi_config in enumerate(config.providers.multi):
+    multi_configs_raw = get_phase_provider_config(config, "code_review")
+    # Type narrowing: code_review is multi-LLM, so must be list
+    multi_configs: list[MultiProviderConfig] = (
+        multi_configs_raw if isinstance(multi_configs_raw, list) else []
+    )
+    for idx, multi_config in enumerate(multi_configs):
         provider = get_provider(multi_config.provider)
         # Use display_model (model_name if set) for logging, model for CLI invocation
         reviewer_id = f"{multi_config.provider}-{multi_config.display_model}"
@@ -570,30 +579,36 @@ async def run_code_review_phase(
         )
         tasks.append(task)
 
-    # Add master as reviewer (also restricted during review phase)
-    # Master gets next color index after all multi providers
-    master_provider = get_provider(config.providers.master.provider)
-    master_id = f"master-{config.providers.master.display_model}"
-    master_color_index = len(config.providers.multi)
-    master_task = asyncio.create_task(
-        _invoke_reviewer(
-            master_provider,
-            prompt,
-            timeout,
-            master_id,
-            model=config.providers.master.model,
-            allowed_tools=_REVIEWER_ALLOWED_TOOLS,
-            run_timestamp=run_timestamp,
-            epic_num=epic_num,
-            story_num=story_num,
-            benchmarking_enabled=benchmarking_enabled,
-            settings_file=config.providers.master.settings_path,
-            color_index=master_color_index,
-            cwd=project_path,
-            display_model=config.providers.master.display_model,
+    # Add master as reviewer ONLY when using global providers.multi fallback
+    # When phase_models.code_review is defined, user has full control - no auto-add
+    phase_has_override = config.phase_models and "code_review" in config.phase_models
+    if not phase_has_override:
+        master_provider = get_provider(config.providers.master.provider)
+        master_id = f"master-{config.providers.master.display_model}"
+        master_color_index = len(multi_configs)
+        master_task = asyncio.create_task(
+            _invoke_reviewer(
+                master_provider,
+                prompt,
+                timeout,
+                master_id,
+                model=config.providers.master.model,
+                allowed_tools=_REVIEWER_ALLOWED_TOOLS,
+                run_timestamp=run_timestamp,
+                epic_num=epic_num,
+                story_num=story_num,
+                benchmarking_enabled=benchmarking_enabled,
+                settings_file=config.providers.master.settings_path,
+                color_index=master_color_index,
+                cwd=project_path,
+                display_model=config.providers.master.display_model,
+            )
         )
-    )
-    tasks.append(master_task)
+        tasks.append(master_task)
+    else:
+        logger.debug(
+            "phase_models.code_review defined - master NOT auto-added"
+        )
 
     logger.info("Invoking %d reviewers in parallel", len(tasks))
 

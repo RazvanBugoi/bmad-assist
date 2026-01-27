@@ -59,6 +59,69 @@ providers:
 | `model_name` | No | Display name in logs/benchmarks |
 | `settings` | No | Path to settings file (claude-subprocess) |
 
+## Per-Phase Model Configuration
+
+Override providers for specific workflow phases using `phase_models`. This enables cost/quality optimization - use powerful models for critical phases, faster models for synthesis.
+
+```yaml
+phase_models:
+  # Single-LLM phases - object format
+  create_story:
+    provider: claude-subprocess
+    model: opus
+  dev_story:
+    provider: claude-subprocess
+    model: opus
+  validate_story_synthesis:
+    provider: claude-subprocess
+    model: sonnet
+    model_name: glm-4.7
+    settings: ~/.claude/glm.json
+  code_review_synthesis:
+    provider: claude-subprocess
+    model: haiku
+
+  # Multi-LLM phases - array format
+  # Lists ALL validators/reviewers - master is NOT auto-added
+  validate_story:
+    - provider: gemini
+      model: gemini-2.5-flash
+    - provider: gemini
+      model: gemini-3-flash-preview
+    - provider: claude-subprocess
+      model: sonnet
+  code_review:
+    - provider: gemini
+      model: gemini-2.5-flash
+    - provider: claude-subprocess
+      model: sonnet
+```
+
+### Phase Types
+
+**Single-LLM phases** (object format):
+- `create_story` - Story creation from epic
+- `validate_story_synthesis` - Consolidate validation reports
+- `dev_story` - Implementation
+- `code_review_synthesis` - Consolidate review findings
+- `retrospective` - Epic completion review
+- `atdd` - Acceptance test generation (testarch)
+- `test_review` - Test quality review (testarch)
+- `qa_plan_generate` - QA plan generation
+- `qa_plan_execute` - QA plan execution
+
+**Multi-LLM phases** (array format):
+- `validate_story` - Parallel story validation
+- `code_review` - Parallel code review
+
+### Fallback Behavior
+
+Phases not listed in `phase_models` use global `providers`:
+- Single-LLM phases → `providers.master`
+- Multi-LLM phases → `providers.multi` (with master auto-added)
+
+When `phase_models` defines a multi-LLM phase, you have **full control** over the validator/reviewer list - master is NOT automatically added.
+
 ## Timeouts
 
 Per-phase timeout configuration (in seconds):
