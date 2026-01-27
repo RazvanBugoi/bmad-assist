@@ -122,6 +122,38 @@ timeouts:
 - [Strategic Context](docs/strategic-context.md) - Smart document loading optimization
 - [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 
+## Workflow Architecture
+
+bmad-assist extends [BMAD Method](https://github.com/bmad-code-org/BMAD-METHOD) workflows for Multi-LLM automation.
+
+### Modified from BMAD
+
+| Workflow | Changes |
+|----------|---------|
+| `code-review` | Removed interactive steps, file discovery handled by compiler, outputs to stdout with extraction markers |
+| `create-story` | Removed user menus, context injected by compiler |
+| `dev-story` | Removed interactive confirmations |
+| `retrospective` | Automated summary generation |
+
+### Added by bmad-assist
+
+| Workflow | Purpose |
+|----------|---------|
+| `validate-story` | Multi-LLM story validation with INVEST criteria and Evidence Score |
+| `validate-story-synthesis` | Consolidates multiple validator reports into single verdict |
+| `code-review-synthesis` | Consolidates code review findings from multiple reviewers |
+| `qa-plan-generate` | Generates QA test plans from requirements |
+| `qa-plan-execute` | Executes generated QA plans |
+
+### Key Differences from Vanilla BMAD
+
+- **No user interaction** - Workflows run non-interactively for automation
+- **Context injection** - Compiler embeds all needed files (story, architecture, PRD) instead of runtime loading
+- **Stdout output** - Reports written to stdout with markers (`<!-- VALIDATION_REPORT_START -->`) for orchestrator extraction
+- **Read-only validators** - Multi-LLM validators cannot modify files; only Master LLM writes code
+
+Patches are transparent - see `.bmad-assist/patches/` for implementation details.
+
 ## Development
 
 ```bash
