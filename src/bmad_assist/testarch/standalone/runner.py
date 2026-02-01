@@ -180,7 +180,11 @@ class StandaloneRunner:
         config_path = self.project_root / "bmad-assist.yaml"
         if config_path.exists():
             try:
-                config = load_config_with_project(project_path=self.project_root)
+                # Disable CWD config to prevent workspace config from overriding project
+                config = load_config_with_project(
+                    project_path=self.project_root,
+                    cwd_config_path=False,
+                )
                 logger.debug("Loaded existing config from %s", config_path)
 
                 # CRITICAL: Apply provider override if specified
