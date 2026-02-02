@@ -137,6 +137,7 @@ window.sseConnectionComponent = function() {
             });
 
             // Story 22.9: Handle loop_status SSE event
+            // Fix: Reset all button states on 'stopped' and 'error' status
             this.eventSource.addEventListener('loop_status', (e) => {
                 const data = JSON.parse(e.data);
                 this.loopRunning = data.running;
@@ -145,9 +146,15 @@ window.sseConnectionComponent = function() {
                     this.pauseRequested = true;
                 } else if (data.status === 'running') {
                     this.isPaused = false;
+                    this.pauseRequested = false;
                     this.terminalStatus = 'running';
-                } else if (data.status === 'stopped') {
+                } else if (data.status === 'stopped' || data.status === 'error') {
+                    // Reset all loop-related state when stopped or error
+                    this.isPaused = false;
+                    this.pauseRequested = false;
                     this.terminalStatus = 'stopped';
+                    // Fix by Rafael Lopes Pini: Clear queue.current when loop stops
+                    this.queue.current = null;
                 }
             });
 
@@ -201,17 +208,73 @@ window.sseConnectionComponent = function() {
             switch (eventType) {
                 case 'workflow_status':
                     this._updateStoryPhase(data);
+                    // Fix by Rafael Lopes Pini: Update queue.current with current phase info
+                    this._updateQueueCurrent(data);
                     break;
                 case 'story_status':
                     this._updateStoryStatus(data);
                     break;
                 case 'story_transition':
                     this._updateStoryTransition(data);
+                    // Fix by Rafael Lopes Pini: Update queue.current on story transitions
+                    this._updateQueueCurrent(data);
                     break;
             }
 
             // Re-render icons after state change
             this.$nextTick(() => this.refreshIcons());
+        },
+
+        /**
+         * Update queue.current from SSE event data
+         * Fix by Rafael Lopes Pini: Populate queue.current to show current task in header
+         * @param {Object} eventData - SSE event data with nested data field
+         */
+        _updateQueueCurrent(eventData) {
+            const data = eventData.data || eventData;
+
+            const storyId = data.current_story || data.story_id;
+            if (!storyId) return;
+
+            const parts = storyId.split('.');
+            const epicNum = parts[0] || data.epic_num;
+            const storyNum = parts[1] || data.story_num;
+            const phase = data.current_phase || data.phase;
+
+            if (!phase) return;
+
+            const phaseDisplayNames = {
+                'create_story': 'Create Story',
+                'CREATE_STORY': 'Create Story',
+                'validate_story': 'Validate Story',
+                'VALIDATE_STORY': 'Validate Story',
+                'validate_story_synthesis': 'Validate Synthesis',
+                'VALIDATE_STORY_SYNTHESIS': 'Validate Synthesis',
+                'dev_story': 'Develop Story',
+                'DEV_STORY': 'Develop Story',
+                'code_review': 'Code Review',
+                'CODE_REVIEW': 'Code Review',
+                'code_review_synthesis': 'Review Synthesis',
+                'CODE_REVIEW_SYNTHESIS': 'Review Synthesis',
+                'retrospective': 'Retrospective',
+                'RETROSPECTIVE': 'Retrospective',
+                'qa_plan_generate': 'QA Plan',
+                'QA_PLAN_GENERATE': 'QA Plan',
+                'qa_plan_execute': 'QA Execute',
+                'QA_PLAN_EXECUTE': 'QA Execute'
+            };
+            const workflow = phaseDisplayNames[phase] || phase;
+
+            // Capture phase_started_at for elapsed time display
+            // When in-progress status is received, use the timestamp from the event
+            const phaseStartedAt = data.phase_started_at || this.queue.current?.phase_started_at;
+
+            this.queue.current = {
+                workflow: workflow,
+                epic_num: epicNum,
+                story_num: storyNum,
+                phase_started_at: phaseStartedAt
+            };
         }
     };
 };

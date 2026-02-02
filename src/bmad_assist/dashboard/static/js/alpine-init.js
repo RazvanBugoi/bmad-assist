@@ -69,6 +69,9 @@ function dashboard() {
         getEpicStatusIcon: utils.getEpicStatusIcon,
         getActionIcon: utils.getActionIcon,
 
+        // Elapsed time display tick counter (triggers Alpine reactivity)
+        elapsedTimeTick: 0,
+
         // Phase helpers (not in utils.js, keep inline)
         getPhaseIcon(status) {
             const icons = {
@@ -78,6 +81,37 @@ function dashboard() {
                 pending: 'circle-dashed'
             };
             return icons[status] || 'circle-dashed';
+        },
+
+        /**
+         * Format elapsed time from phase_started_at ISO string
+         * @param {string|null} phaseStartedAt - ISO timestamp of phase start
+         * @returns {string} Formatted elapsed time (e.g., "1m 34s")
+         */
+        formatElapsedTime(phaseStartedAt) {
+            // Trigger reactivity on tick
+            void this.elapsedTimeTick;
+
+            if (!phaseStartedAt) {
+                return '--:--';
+            }
+
+            const startTime = new Date(phaseStartedAt).getTime();
+            const now = Date.now();
+            const elapsedMs = now - startTime;
+
+            if (elapsedMs < 0) {
+                return '0s';
+            }
+
+            const totalSeconds = Math.floor(elapsedMs / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+
+            if (minutes > 0) {
+                return `${minutes}m ${seconds}s`;
+            }
+            return `${seconds}s`;
         },
 
         getPhaseTextColor(status) {
@@ -156,6 +190,11 @@ function dashboard() {
 
             // Initialize Lucide icons after Alpine mounts
             this.$nextTick(() => this.refreshIcons());
+
+            // Start elapsed time timer (updates every second)
+            setInterval(() => {
+                this.elapsedTimeTick++;
+            }, 1000);
         }
     };
 }

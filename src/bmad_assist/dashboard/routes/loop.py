@@ -72,6 +72,42 @@ async def stop_loop(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def get_log_level(request: Request) -> JSONResponse:
+    """GET /api/loop/log-level - Get current log level for subprocess.
+
+    Returns the current log level setting (debug, info, warning).
+    """
+    server = request.app.state.server
+    return JSONResponse({"level": server.get_log_level()})
+
+
+async def set_log_level(request: Request) -> JSONResponse:
+    """POST /api/loop/log-level - Set log level for subprocess.
+
+    Body: {"level": "debug|info|warning"}
+
+    Updates the log level control file that the subprocess watches.
+    Takes effect on next log level check (typically within seconds).
+    """
+    server = request.app.state.server
+
+    try:
+        body = await request.json()
+        level = body.get("level", "info").lower()
+
+        if level not in ("debug", "info", "warning"):
+            return JSONResponse(
+                {"error": f"Invalid level: {level}. Must be debug, info, or warning"},
+                status_code=400,
+            )
+
+        result = await server.set_log_level(level)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.exception("Failed to set log level")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 async def get_loop_status(request: Request) -> JSONResponse:
     """GET /api/loop/status - Get loop running status.
 
@@ -126,4 +162,6 @@ routes = [
     Route("/api/loop/resume", resume_loop, methods=["POST"]),
     Route("/api/loop/stop", stop_loop, methods=["POST"]),
     Route("/api/loop/status", get_loop_status, methods=["GET"]),
+    Route("/api/loop/log-level", get_log_level, methods=["GET"]),
+    Route("/api/loop/log-level", set_log_level, methods=["POST"]),
 ]

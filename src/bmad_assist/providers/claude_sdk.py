@@ -26,6 +26,7 @@ Example:
 
 import asyncio
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -245,6 +246,7 @@ class ClaudeSDKProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute Claude Code SDK with the given prompt.
 

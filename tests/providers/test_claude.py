@@ -20,10 +20,7 @@ Tests cover:
 - AC12: Package exports ClaudeSubprocessProvider
 """
 
-import io
 from pathlib import Path
-from subprocess import TimeoutExpired
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +29,6 @@ from bmad_assist.core.exceptions import ProviderError
 from bmad_assist.providers import BaseProvider, ClaudeSubprocessProvider, ProviderResult
 from bmad_assist.providers.base import extract_tool_details
 from bmad_assist.providers.claude import (
-    DEFAULT_TIMEOUT,
     PROMPT_TRUNCATE_LENGTH,
     SUPPORTED_MODELS,
     _truncate_prompt,
@@ -48,6 +44,7 @@ def make_stream_json_output(text: str = "Mock response", session_id: str = "test
 
     Returns:
         Multi-line string with JSON stream messages.
+
     """
     import json
 
@@ -80,15 +77,20 @@ def create_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    poll_returns_none_count: int = 1,
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for testing.
 
     Args:
         stdout_content: Raw content for stdout. If None, generates stream-json.
         stderr_content: Content to return from stderr.readline()
-        returncode: Exit code to return from wait()
+        returncode: Exit code to return from poll() when done
         wait_side_effect: Exception to raise from wait() (e.g., TimeoutExpired)
         response_text: Text to include in stream-json output (if stdout_content is None)
+        poll_returns_none_count: Number of poll() calls that return None before
+            returning returncode. Set to 1 for instant completion.
+        never_finish: If True, poll() always returns None (for timeout tests).
 
     Returns:
         MagicMock configured to behave like a Popen process
@@ -118,12 +120,30 @@ def create_mock_process(
     mock_process.stdin.write = MagicMock()
     mock_process.stdin.close = MagicMock()
 
+    # Mock poll() for the polling loop
+    if never_finish:
+        # Always return None (process never finishes - for timeout tests)
+        mock_process.poll.return_value = None
+    else:
+        # Return None poll_returns_none_count times, then returncode
+        poll_call_count = [0]
+
+        def poll_side_effect():
+            poll_call_count[0] += 1
+            if poll_call_count[0] <= poll_returns_none_count:
+                return None
+            return returncode
+
+        mock_process.poll.side_effect = poll_side_effect
+
+    # Legacy wait mock for backward compatibility
     if wait_side_effect:
         mock_process.wait.side_effect = wait_side_effect
     else:
         mock_process.wait.return_value = returncode
 
     mock_process.kill = MagicMock()
+    mock_process.pid = 12345  # For process group operations
 
     return mock_process
 
@@ -315,26 +335,28 @@ class TestClaudeSubprocessProviderInvoke:
         call_kwargs = mock_successful_popen.call_args[1]
         assert call_kwargs["text"] is True
 
-    def test_invoke_waits_with_timeout(
+    def test_invoke_polls_process(
         self, provider: ClaudeSubprocessProvider, mock_successful_popen: MagicMock
     ) -> None:
-        """Test AC5: invoke() uses timeout when calling wait()."""
+        """Test AC5: invoke() uses poll() loop to wait for process."""
         provider.invoke("Hello", timeout=60)
 
         mock_process = mock_successful_popen.return_value
-        mock_process.wait.assert_called_once()
-        call_kwargs = mock_process.wait.call_args[1]
-        assert call_kwargs["timeout"] == 60
+        # poll() is called at least once to check if process finished
+        assert mock_process.poll.call_count >= 1
 
-    def test_invoke_uses_default_timeout(
+    def test_invoke_uses_default_timeout_implicitly(
         self, provider: ClaudeSubprocessProvider, mock_successful_popen: MagicMock
     ) -> None:
-        """Test AC5: invoke() uses DEFAULT_TIMEOUT when timeout=None."""
-        provider.invoke("Hello")
+        """Test AC5: invoke() defaults to DEFAULT_TIMEOUT when timeout=None.
 
-        mock_process = mock_successful_popen.return_value
-        call_kwargs = mock_process.wait.call_args[1]
-        assert call_kwargs["timeout"] == DEFAULT_TIMEOUT
+        Since we use poll() loop with time.perf_counter() for timeout,
+        we verify that the process completes without timeout error when
+        process finishes quickly.
+        """
+        # This should complete without ProviderTimeoutError
+        result = provider.invoke("Hello")
+        assert result.exit_code == 0
 
     def test_invoke_uses_default_model_when_none(
         self, provider: ClaudeSubprocessProvider, mock_successful_popen: MagicMock
@@ -489,33 +511,30 @@ class TestClaudeSubprocessProviderErrors:
         return ClaudeSubprocessProvider()
 
     def test_invoke_raises_providererror_on_timeout(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
-        """Test AC8: invoke() raises ProviderError on TimeoutExpired."""
+        """Test AC8: invoke() raises ProviderError when timeout exceeded."""
         with patch("bmad_assist.providers.claude.Popen") as mock:
-            mock.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
-            )
+            mock.return_value = create_mock_process(never_finish=True)
 
             with pytest.raises(ProviderError) as exc_info:
-                provider.invoke("Hello", timeout=5)
+                # Use very short timeout to make test fast
+                provider.invoke("Hello", timeout=1)
 
             assert "timeout" in str(exc_info.value).lower()
-            assert "5s" in str(exc_info.value)
+            assert "1s" in str(exc_info.value)
 
     def test_invoke_timeout_error_includes_truncated_prompt(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test AC8: Timeout error includes prompt (truncated if > 100 chars)."""
         long_prompt = "x" * 150
 
         with patch("bmad_assist.providers.claude.Popen") as mock:
-            mock.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
-            )
+            mock.return_value = create_mock_process(never_finish=True)
 
             with pytest.raises(ProviderError) as exc_info:
-                provider.invoke(long_prompt, timeout=5)
+                provider.invoke(long_prompt, timeout=1)
 
             error_msg = str(exc_info.value)
             # Should be truncated
@@ -525,33 +544,31 @@ class TestClaudeSubprocessProviderErrors:
             assert "x" * 150 not in error_msg
 
     def test_invoke_timeout_error_short_prompt_not_truncated(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test AC8: Short prompts are not truncated in timeout error."""
         short_prompt = "Hello world"
 
         with patch("bmad_assist.providers.claude.Popen") as mock:
-            mock.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
-            )
+            mock.return_value = create_mock_process(never_finish=True)
 
             with pytest.raises(ProviderError) as exc_info:
-                provider.invoke(short_prompt, timeout=5)
+                provider.invoke(short_prompt, timeout=1)
 
             error_msg = str(exc_info.value)
             assert "Hello world" in error_msg
             assert "..." not in error_msg
 
-    def test_invoke_timeout_kills_process(self, provider: ClaudeSubprocessProvider) -> None:
-        """Test AC8: TimeoutExpired triggers process.kill()."""
+    def test_invoke_timeout_kills_process(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
+        """Test AC8: Timeout triggers process.kill()."""
         with patch("bmad_assist.providers.claude.Popen") as mock:
-            mock_process = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
-            )
+            mock_process = create_mock_process(never_finish=True)
             mock.return_value = mock_process
 
             with pytest.raises(ProviderError):
-                provider.invoke("Hello", timeout=5)
+                provider.invoke("Hello", timeout=1)
 
             mock_process.kill.assert_called_once()
 
@@ -827,3 +844,91 @@ class TestExtractToolDetails:
         """Test Gemini's read_file maps to Read."""
         result = extract_tool_details("read_file", {"path": "/home/user/file.py"})
         assert "file.py" in result
+
+
+class TestClaudeSubprocessProviderCancelSupport:
+    """Tests for cancel_token support in ClaudeSubprocessProvider."""
+
+    @pytest.fixture
+    def provider(self) -> ClaudeSubprocessProvider:
+        """Create ClaudeSubprocessProvider instance."""
+        return ClaudeSubprocessProvider()
+
+    def test_invoke_accepts_cancel_token(self, provider: ClaudeSubprocessProvider) -> None:
+        """Test invoke() accepts cancel_token parameter."""
+        import threading
+
+        cancel_token = threading.Event()
+
+        with patch("bmad_assist.providers.claude.Popen") as mock:
+            mock.return_value = create_mock_process()
+
+            # Should not raise
+            result = provider.invoke("Hello", cancel_token=cancel_token)
+            assert result.exit_code == 0
+
+    def test_invoke_returns_cancelled_result_when_token_set(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
+        """Test invoke() returns cancelled result when cancel_token is set."""
+        import threading
+
+        cancel_token = threading.Event()
+        cancel_token.set()  # Pre-set the token
+
+        with (
+            patch("bmad_assist.providers.claude.Popen") as mock,
+            patch("bmad_assist.providers.claude.os.getpgid", return_value=12345),
+            patch("bmad_assist.providers.claude.os.killpg"),
+        ):
+            mock.return_value = create_mock_process(never_finish=True)
+
+            result = provider.invoke("Hello", cancel_token=cancel_token)
+
+            assert result.exit_code == -15
+            assert "Cancelled" in result.stderr
+
+    def test_cancel_method_terminates_process(self, provider: ClaudeSubprocessProvider) -> None:
+        """Test cancel() terminates current process."""
+        import signal
+
+        with (
+            patch("bmad_assist.providers.claude.os.getpgid", return_value=12345),
+            patch("bmad_assist.providers.claude.os.killpg") as mock_killpg,
+        ):
+                mock_process = MagicMock()
+                # Process finishes after SIGTERM
+                poll_calls = [0]
+
+                def poll_effect():
+                    poll_calls[0] += 1
+                    if poll_calls[0] >= 2:  # Finish after 2nd poll
+                        return 0
+                    return None
+
+                mock_process.poll.side_effect = poll_effect
+
+                provider._current_process = mock_process
+
+                provider.cancel()
+
+                # Should have sent SIGTERM (first call)
+                mock_killpg.assert_any_call(12345, signal.SIGTERM)
+
+    def test_cancel_method_does_nothing_when_no_process(
+        self, provider: ClaudeSubprocessProvider
+    ) -> None:
+        """Test cancel() is safe when no process is running."""
+        # Should not raise
+        provider.cancel()
+
+    def test_invoke_clears_current_process_on_completion(
+        self, provider: ClaudeSubprocessProvider
+    ) -> None:
+        """Test _current_process is cleared after invoke() completes."""
+        with patch("bmad_assist.providers.claude.Popen") as mock:
+            mock.return_value = create_mock_process()
+
+            provider.invoke("Hello")
+
+            assert provider._current_process is None

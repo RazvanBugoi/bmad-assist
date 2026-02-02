@@ -43,6 +43,7 @@ from bmad_assist.providers.base import (
     ProviderResult,
     extract_tool_details,
     format_tag,
+    should_print_progress,
     validate_settings_file,
     write_progress,
 )
@@ -221,6 +222,7 @@ class GeminiProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute Gemini CLI with the given prompt using JSON streaming.
 
@@ -422,6 +424,7 @@ class GeminiProvider(BaseProvider):
                     errors="replace",
                     cwd=cwd,  # Popen handles chdir internally
                     env=env,
+                    start_new_session=True,  # Own process group for safe termination
                 )
 
                 # Write prompt to stdin and close it
@@ -429,14 +432,10 @@ class GeminiProvider(BaseProvider):
                     process.stdin.write(final_prompt)
                     process.stdin.close()
 
-                # Print output only in verbose/debug mode
-                print_output = logger.isEnabledFor(logging.DEBUG)
-
                 def process_json_stream(
                     stream: Any,
                     text_parts: list[str],
                     raw_lines: list[str],
-                    print_progress: bool,
                     json_logger: DebugJsonLogger,
                     color_idx: int | None,
                 ) -> None:
@@ -458,7 +457,7 @@ class GeminiProvider(BaseProvider):
 
                             if msg_type == "init":
                                 session_id = msg.get("session_id", "?")
-                                if print_progress:
+                                if should_print_progress():
                                     tag = format_tag("INIT", color_idx)
                                     write_progress(f"{tag} Session: {session_id}")
 
@@ -468,7 +467,7 @@ class GeminiProvider(BaseProvider):
                                     content = msg.get("content", "")
                                     if content:
                                         text_parts.append(content)
-                                        if print_progress:
+                                        if should_print_progress():
                                             preview = content[:200]
                                             if len(content) > 200:
                                                 preview += "..."
@@ -495,7 +494,7 @@ class GeminiProvider(BaseProvider):
                                         tool_name,
                                         normalized_tool_name,
                                     )
-                                if print_progress:
+                                if should_print_progress():
                                     tool_params = msg.get("parameters", {})
                                     # Use shared extract_tool_details for consistent display
                                     details = extract_tool_details(tool_name, tool_params)
@@ -519,7 +518,7 @@ class GeminiProvider(BaseProvider):
                                 pass
 
                             elif msg_type == "result":
-                                if print_progress:
+                                if should_print_progress():
                                     stats = msg.get("stats", {})
                                     total_tokens = stats.get("total_tokens", 0)
                                     duration_ms = stats.get("duration_ms", 0)
@@ -529,13 +528,13 @@ class GeminiProvider(BaseProvider):
                                     )
 
                             elif msg_type == "error":
-                                if print_progress:
+                                if should_print_progress():
                                     error_msg = msg.get("message", str(msg))
                                     tag = format_tag("ERROR", color_idx)
                                     write_progress(f"{tag} {error_msg}")
 
                         except json.JSONDecodeError:
-                            if print_progress:
+                            if should_print_progress():
                                 tag = format_tag("RAW", color_idx)
                                 write_progress(f"{tag} {stripped}")
 
@@ -544,7 +543,6 @@ class GeminiProvider(BaseProvider):
                 def read_stderr(
                     stream: Any,
                     chunks: list[str],
-                    print_lines: bool,
                     color_idx: int | None,
                 ) -> None:
                     """Read stderr stream."""
@@ -557,7 +555,7 @@ class GeminiProvider(BaseProvider):
                     )
                     for line in iter(stream.readline, ""):
                         chunks.append(line)
-                        if print_lines:
+                        if should_print_progress():
                             stripped = line.rstrip()
                             # Skip known informational messages
                             if any(stripped.startswith(p) for p in info_prefixes):
@@ -573,19 +571,18 @@ class GeminiProvider(BaseProvider):
                         process.stdout,
                         response_text_parts,
                         raw_stdout_lines,
-                        print_output,
                         debug_json_logger,
                         color_index,
                     ),
                 )
                 stderr_thread = threading.Thread(
                     target=read_stderr,
-                    args=(process.stderr, stderr_chunks, print_output, color_index),
+                    args=(process.stderr, stderr_chunks, color_index),
                 )
                 stdout_thread.start()
                 stderr_thread.start()
 
-                if print_output:
+                if should_print_progress():
                     shown_model = display_model or effective_model
                     tag = format_tag("START", color_index)
                     write_progress(f"{tag} Invoking Gemini CLI (model={shown_model})...")

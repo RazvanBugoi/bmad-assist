@@ -41,6 +41,7 @@ ValidStatus = Literal[
     "done",
     "blocked",
     "deferred",
+    "optional",
 ]
 
 
@@ -144,7 +145,7 @@ class SprintStatusEntry(BaseModel):
     )
     status: ValidStatus = Field(
         ...,
-        description="Status: backlog|ready-for-dev|in-progress|review|done|blocked|deferred",
+        description="Status: backlog|ready-for-dev|in-progress|review|done|blocked|deferred|optional",
     )
     entry_type: EntryType = Field(
         default=EntryType.UNKNOWN,

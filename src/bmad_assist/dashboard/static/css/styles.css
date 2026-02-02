@@ -1,5 +1,10 @@
 /* bmad-dashboard custom styles */
 
+/* Explicit bg-card utility to ensure solid background with Tailwind v4 CDN */
+.bg-card {
+    background-color: var(--card) !important;
+}
+
 /* Scrollbar styling - uses CSS variables */
 ::-webkit-scrollbar {
     width: 8px;

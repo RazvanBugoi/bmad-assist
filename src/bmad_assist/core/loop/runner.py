@@ -23,9 +23,12 @@ import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from bmad_assist.core.loop.cancellation import CancellationContext
 
 from bmad_assist import __version__
 from bmad_assist.core.config import Config
@@ -33,6 +36,7 @@ from bmad_assist.core.exceptions import StateError
 
 # Story 22.9: Dashboard SSE event emission
 from bmad_assist.core.loop.dashboard_events import (
+    emit_story_status,
     emit_story_transition,
     emit_workflow_status,
     generate_run_id,
@@ -281,6 +285,8 @@ def run_loop(
     project_path: Path,
     epic_list: list[EpicId],
     epic_stories_loader: Callable[[EpicId], list[str]],
+    cancel_ctx: CancellationContext | None = None,
+    skip_signal_handlers: bool = False,
 ) -> LoopExitReason:
     """Execute the main BMAD development loop.
 
@@ -304,6 +310,10 @@ def run_loop(
             Typically generated via glob docs/epics/epic-*.md → extract numbers → sort.
         epic_stories_loader: Callable that returns story IDs for given epic.
             Takes epic number (int), returns list of story IDs (list[str]).
+        cancel_ctx: Optional CancellationContext for dashboard integration.
+            When provided, loop checks is_cancelled at safe checkpoints.
+        skip_signal_handlers: If True, skip signal handler registration.
+            Use when running in non-main thread (e.g., ThreadPoolExecutor).
 
     Returns:
         LoopExitReason indicating how the loop exited:
@@ -311,6 +321,7 @@ def run_loop(
         - INTERRUPTED_SIGINT: Interrupted by Ctrl+C (SIGINT)
         - INTERRUPTED_SIGTERM: Interrupted by kill signal (SIGTERM)
         - GUARDIAN_HALT: Halted by Guardian for user intervention
+        - CANCELLED: Cancelled via CancellationContext (dashboard stop)
 
     Raises:
         StateError: If epic_list is empty.
@@ -336,8 +347,10 @@ def run_loop(
         raise StateError("No epics found in project")
 
     # Story 6.6: Clear shutdown state from any previous invocation and register handlers
+    # Skip signal handlers when running in non-main thread (e.g., dashboard executor)
     reset_shutdown()
-    register_signal_handlers()
+    if not skip_signal_handlers:
+        register_signal_handlers()
 
     try:
         # Load loop config and set singleton for this run
@@ -376,7 +389,7 @@ def run_loop(
         with _running_lock(project_path):
             try:
                 exit_reason = _run_loop_body(
-                    config, project_path, epic_list, epic_stories_loader, run_log
+                    config, project_path, epic_list, epic_stories_loader, run_log, cancel_ctx
                 )
                 # Update run_log with final status
                 run_log.status = RunStatus.COMPLETED
@@ -397,7 +410,45 @@ def run_loop(
     finally:
         # Story 6.6: Always restore previous signal handlers on exit
         # Moved outside _running_lock to ensure cleanup even if lock acquisition fails
-        unregister_signal_handlers()
+        if not skip_signal_handlers:
+            unregister_signal_handlers()
+
+
+def _should_stop(cancel_ctx: CancellationContext | None) -> bool:
+    """Check if loop should stop (cancel OR signal).
+
+    Unified check for both cancel context (dashboard) and signal handlers (CLI).
+
+    Args:
+        cancel_ctx: Optional CancellationContext from dashboard.
+
+    Returns:
+        True if loop should stop, False otherwise.
+
+    """
+    if cancel_ctx and cancel_ctx.is_cancelled:
+        return True
+    if shutdown_requested():
+        return True
+    return False
+
+
+def _get_stop_exit_reason(cancel_ctx: CancellationContext | None) -> LoopExitReason:
+    """Get the appropriate exit reason when stopping.
+
+    Distinguishes between dashboard cancellation and signal interrupts.
+
+    Args:
+        cancel_ctx: Optional CancellationContext from dashboard.
+
+    Returns:
+        LoopExitReason.CANCELLED for dashboard cancellation,
+        INTERRUPTED_SIGINT/SIGTERM for signal interrupts.
+
+    """
+    if cancel_ctx and cancel_ctx.is_cancelled:
+        return LoopExitReason.CANCELLED
+    return _get_interrupt_exit_reason()
 
 
 def _run_loop_body(
@@ -406,6 +457,7 @@ def _run_loop_body(
     epic_list: list[EpicId],
     epic_stories_loader: Callable[[EpicId], list[str]],
     run_log: RunLog | None = None,
+    cancel_ctx: CancellationContext | None = None,
 ) -> LoopExitReason:
     """Execute the main loop body with signal handling active.
 
@@ -419,6 +471,7 @@ def _run_loop_body(
         epic_list: Sorted list of epic numbers (validated non-empty by run_loop).
         epic_stories_loader: Callable that returns story IDs for given epic.
         run_log: Optional RunLog for tracking phase invocations.
+        cancel_ctx: Optional CancellationContext for dashboard integration.
 
     Returns:
         LoopExitReason indicating how the loop exited.
@@ -632,6 +685,16 @@ def _run_loop_body(
 
     # Main loop - runs until project complete or guardian halt
     while True:
+        # Dashboard integration: Check for log level changes from control file
+        from bmad_assist.cli_utils import check_log_level_file
+
+        check_log_level_file(project_path)
+
+        # Dashboard integration: Check for cancellation before each phase (safe checkpoint #1)
+        if _should_stop(cancel_ctx):
+            logger.info("Stop requested, exiting at phase boundary")
+            return _get_stop_exit_reason(cancel_ctx)
+
         # Story standalone-03 AC1: Reset phase timing BEFORE each phase execution
         # This ensures accurate duration reporting in notifications
         start_phase_timing(state)
@@ -648,6 +711,9 @@ def _run_loop_body(
         if run_log is not None:
             phase_name = state.current_phase.name if state.current_phase else "UNKNOWN"
             phase_start_time = state.phase_started_at or datetime.now(UTC)
+            # Ensure timezone info for proper serialization (state uses naive UTC)
+            if phase_start_time.tzinfo is None:
+                phase_start_time = phase_start_time.replace(tzinfo=UTC)
             run_log.current_phase = CurrentPhase(
                 phase=phase_name,
                 started_at=phase_start_time,
@@ -885,6 +951,11 @@ def _run_loop_body(
         # Save state BEFORE advancing - current_phase is the phase that just completed
         save_state(state, state_path)
 
+        # Dashboard integration: Check for cancellation after save_state (safe checkpoint #2)
+        if _should_stop(cancel_ctx):
+            logger.info("Stop requested after state save, exiting")
+            return _get_stop_exit_reason(cancel_ctx)
+
         # Story 20.10: Invoke sync callbacks after success path save
         _invoke_sprint_sync(state, project_path)
 
@@ -993,6 +1064,42 @@ def _run_loop_body(
                 duration_ms=story_duration,
                 outcome="success",
             )
+
+            # Dashboard SSE: Emit story status change to "done" and story transition "completed"
+            if state.current_story and state.current_epic is not None:
+                story_id_str = state.current_story
+                try:
+                    parsed_epic, parsed_story = parse_story_id(story_id_str)
+                except ValueError:
+                    parsed_epic = state.current_epic
+                    parsed_story = 1
+
+                story_title = story_id_str.replace(".", "-").replace("_", "-").lower()
+                full_story_id = story_id_from_parts(parsed_epic, parsed_story, story_title)
+
+                # Emit story_status: in-progress → done
+                sequence_id += 1
+                emit_story_status(
+                    run_id=run_id,
+                    sequence_id=sequence_id,
+                    epic_num=parsed_epic,
+                    story_num=parsed_story,
+                    story_id=full_story_id,
+                    status="done",
+                    previous_status="in-progress",
+                )
+
+                # Emit story_transition: completed
+                sequence_id += 1
+                emit_story_transition(
+                    run_id=run_id,
+                    sequence_id=sequence_id,
+                    action="completed",
+                    epic_num=parsed_epic,
+                    story_num=parsed_story,
+                    story_id=full_story_id,
+                    story_title=story_title,
+                )
 
             new_state, is_epic_complete = handle_story_completion(state, epic_stories, state_path)
 

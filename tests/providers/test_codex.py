@@ -246,7 +246,7 @@ class TestCodexProviderErrors:
         """Test AC7: invoke() raises ProviderTimeoutError on wait timeout."""
         with patch("bmad_assist.providers.codex.Popen") as mock_popen:
             mock_popen.return_value = create_codex_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["codex"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -260,7 +260,7 @@ class TestCodexProviderErrors:
 
         with patch("bmad_assist.providers.codex.Popen") as mock_popen:
             mock_popen.return_value = create_codex_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["codex"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -279,7 +279,7 @@ class TestCodexProviderErrors:
 
         with patch("bmad_assist.providers.codex.Popen") as mock_popen:
             mock_popen.return_value = create_codex_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["codex"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -295,7 +295,7 @@ class TestCodexProviderErrors:
         """Test AC7: Timeout error includes partial_result with collected data."""
         with patch("bmad_assist.providers.codex.Popen") as mock_popen:
             mock_popen.return_value = create_codex_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["codex"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:

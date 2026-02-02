@@ -16,13 +16,15 @@ Example:
 
 """
 
+import contextlib
 import json
 import logging
 import os
+import signal
 import threading
 import time
 from pathlib import Path
-from subprocess import PIPE, Popen, TimeoutExpired
+from subprocess import PIPE, Popen
 from typing import Any
 
 from bmad_assist.core.debug_logger import DebugJsonLogger
@@ -37,6 +39,7 @@ from bmad_assist.providers.base import (
     ProviderResult,
     extract_tool_details,
     format_tag,
+    should_print_progress,
     validate_settings_file,
     write_progress,
 )
@@ -99,12 +102,71 @@ class ClaudeSubprocessProvider(BaseProvider):
         (graceful degradation). This ensures the CLI uses defaults rather
         than failing on missing settings files.
 
+    Cancel Support:
+        This provider supports mid-invocation cancellation via cancel_token.
+        When cancel_token.is_set() becomes True, the subprocess is terminated
+        using SIGTERM with escalation to SIGKILL after 3 seconds.
+
     Example:
         >>> provider = ClaudeSubprocessProvider()
         >>> result = provider.invoke("Hello", model="opus", timeout=60)
         >>> print(provider.parse_output(result))
 
     """
+
+    def __init__(self) -> None:
+        """Initialize provider with no active process."""
+        self._current_process: Popen[str] | None = None
+        self._process_lock = threading.Lock()
+
+    def _terminate_process(self, process: Popen[str]) -> None:
+        """Terminate process with SIGTERM→SIGKILL escalation.
+
+        Uses process groups for clean termination of child processes.
+        First sends SIGTERM, waits up to 3 seconds, then escalates to SIGKILL.
+
+        Args:
+            process: The Popen process to terminate.
+
+        """
+        if process.poll() is not None:
+            return  # Already exited
+
+        try:
+            pgid = os.getpgid(process.pid)
+        except (ProcessLookupError, OSError):
+            return  # Process already gone
+
+        logger.info("Terminating process group %d (SIGTERM)", pgid)
+
+        # Phase 1: SIGTERM to process group
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            return  # Process already gone
+
+        # Wait up to 3 seconds for graceful exit
+        for _ in range(30):
+            if process.poll() is not None:
+                logger.debug("Process terminated gracefully")
+                return
+            time.sleep(0.1)
+
+        # Phase 2: SIGKILL if still running
+        logger.warning("Process did not terminate, escalating to SIGKILL")
+        with contextlib.suppress(ProcessLookupError, OSError):
+            os.killpg(pgid, signal.SIGKILL)
+
+    def cancel(self) -> None:
+        """Cancel current operation by terminating subprocess.
+
+        Thread-safe: Can be called from any thread while invoke() runs.
+        Uses SIGTERM→SIGKILL escalation for clean termination.
+        """
+        with self._process_lock:
+            if self._current_process is not None:
+                logger.info("Cancelling Claude subprocess")
+                self._terminate_process(self._current_process)
 
     @property
     def provider_name(self) -> str:
@@ -193,6 +255,7 @@ class ClaudeSubprocessProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute Claude Code CLI with the given prompt.
 
@@ -237,6 +300,9 @@ class ClaudeSubprocessProvider(BaseProvider):
             display_model: Human-readable model name for progress output.
                 If provided, shown instead of the CLI model (e.g., "glm-4.7"
                 instead of "sonnet" when using GLM via settings file).
+            cancel_token: Optional threading.Event for cancellation.
+                When set, the subprocess is terminated using SIGTERM→SIGKILL
+                escalation. Returns partial result with exit_code=-15.
 
         Returns:
             ProviderResult containing stdout, stderr, exit code, and timing.
@@ -339,7 +405,6 @@ class ClaudeSubprocessProvider(BaseProvider):
             env["DISABLE_PROMPT_CACHING"] = "1"
 
         start_time = time.perf_counter()
-        print_output = logger.isEnabledFor(logging.DEBUG)
 
         # Debug JSON logger - writes raw JSON to file for debugging
         # Enabled only in DEBUG mode, writes immediately to survive crashes
@@ -361,7 +426,12 @@ class ClaudeSubprocessProvider(BaseProvider):
                 errors="replace",
                 cwd=cwd,
                 env=env,
+                start_new_session=True,  # Enable process group for clean termination
             )
+
+            # Store process for cancel() method
+            with self._process_lock:
+                self._current_process = process
 
             # Write prompt to stdin and close it
             if process.stdin:
@@ -372,7 +442,6 @@ class ClaudeSubprocessProvider(BaseProvider):
                 stream: Any,
                 text_parts: list[str],
                 raw_lines: list[str],
-                print_progress: bool,
                 json_logger: DebugJsonLogger,
                 color_idx: int | None,
             ) -> None:
@@ -393,7 +462,7 @@ class ClaudeSubprocessProvider(BaseProvider):
                         if msg_type == "system" and msg.get("subtype") == "init":
                             # Session started
                             session_id = msg.get("session_id", "?")
-                            if print_progress:
+                            if should_print_progress():
                                 tag = format_tag("INIT", color_idx)
                                 write_progress(f"{tag} Session: {session_id}")
 
@@ -404,7 +473,7 @@ class ClaudeSubprocessProvider(BaseProvider):
                                 if block.get("type") == "text":
                                     text = block.get("text", "")
                                     text_parts.append(text)
-                                    if print_progress:
+                                    if should_print_progress():
                                         # Show first 100 chars of each text block
                                         preview = text[:100].replace("\n", " ")
                                         if len(text) > 100:
@@ -414,7 +483,7 @@ class ClaudeSubprocessProvider(BaseProvider):
                                 elif block.get("type") == "tool_use":
                                     tool_name = block.get("name", "?")
                                     tool_input = block.get("input", {})
-                                    if print_progress:
+                                    if should_print_progress():
                                         details = extract_tool_details(tool_name, tool_input)
                                         tag = format_tag(f"TOOL {tool_name}", color_idx)
                                         if details:
@@ -424,7 +493,7 @@ class ClaudeSubprocessProvider(BaseProvider):
 
                         elif msg_type == "result":
                             # Final result with stats
-                            if print_progress:
+                            if should_print_progress():
                                 cost = msg.get("total_cost_usd", 0)
                                 duration = msg.get("duration_ms", 0)
                                 turns = msg.get("num_turns", 0)
@@ -436,7 +505,7 @@ class ClaudeSubprocessProvider(BaseProvider):
 
                     except json.JSONDecodeError:
                         # Non-JSON line, just accumulate
-                        if print_progress:
+                        if should_print_progress():
                             tag = format_tag("RAW", color_idx)
                             write_progress(f"{tag} {stripped}")
 
@@ -445,13 +514,12 @@ class ClaudeSubprocessProvider(BaseProvider):
             def read_stderr(
                 stream: Any,
                 chunks: list[str],
-                print_lines: bool,
                 color_idx: int | None,
             ) -> None:
                 """Read stderr stream."""
                 for line in iter(stream.readline, ""):
                     chunks.append(line)
-                    if print_lines:
+                    if should_print_progress():
                         tag = format_tag("ERR", color_idx)
                         write_progress(f"{tag} {line.rstrip()}")
                 stream.close()
@@ -463,19 +531,18 @@ class ClaudeSubprocessProvider(BaseProvider):
                     process.stdout,
                     response_text_parts,
                     raw_stdout_lines,
-                    print_output,
                     debug_json_logger,
                     color_index,
                 ),
             )
             stderr_thread = threading.Thread(
                 target=read_stderr,
-                args=(process.stderr, stderr_chunks, print_output, color_index),
+                args=(process.stderr, stderr_chunks, color_index),
             )
             stdout_thread.start()
             stderr_thread.start()
 
-            if print_output:
+            if should_print_progress():
                 shown_model = display_model or effective_model
                 tag = format_tag("START", color_index)
                 write_progress(f"{tag} Invoking Claude CLI (model={shown_model})...")
@@ -484,46 +551,85 @@ class ClaudeSubprocessProvider(BaseProvider):
                 tag = format_tag("WAITING", color_index)
                 write_progress(f"{tag} Streaming response...")
 
-            # Wait for process with timeout
-            try:
-                returncode = process.wait(timeout=effective_timeout)
-            except TimeoutExpired as e:
-                process.kill()
-                stdout_thread.join(timeout=1)
-                stderr_thread.join(timeout=1)
-                duration_ms = int((time.perf_counter() - start_time) * 1000)
-                truncated = _truncate_prompt(prompt)
+            # Wait for process with timeout and cancel check
+            deadline = time.perf_counter() + effective_timeout
+            returncode: int | None = None
+            cancelled = False
 
-                partial_result = ProviderResult(
-                    stdout="".join(response_text_parts),
-                    stderr="".join(stderr_chunks),
-                    exit_code=-1,
-                    duration_ms=duration_ms,
-                    model=effective_model,
-                    command=tuple(command),
-                )
+            while True:
+                returncode = process.poll()
+                if returncode is not None:
+                    break
 
-                logger.warning(
-                    "Provider timeout: provider=%s, model=%s, timeout=%ds, "
-                    "duration_ms=%d, prompt=%s",
-                    self.provider_name,
-                    effective_model,
-                    effective_timeout,
-                    duration_ms,
-                    truncated,
-                )
+                # Check for cancellation
+                if cancel_token is not None and cancel_token.is_set():
+                    logger.info("Cancel token set, terminating subprocess")
+                    self._terminate_process(process)
+                    cancelled = True
+                    returncode = -15  # SIGTERM
+                    break
 
-                # Close debug logger before raising
-                debug_json_logger.close()
+                # Check for timeout
+                if time.perf_counter() >= deadline:
+                    process.kill()
+                    stdout_thread.join(timeout=1)
+                    stderr_thread.join(timeout=1)
+                    duration_ms = int((time.perf_counter() - start_time) * 1000)
+                    truncated = _truncate_prompt(prompt)
 
-                raise ProviderTimeoutError(
-                    f"Claude CLI timeout after {effective_timeout}s: {truncated}",
-                    partial_result=partial_result,
-                ) from e
+                    partial_result = ProviderResult(
+                        stdout="".join(response_text_parts),
+                        stderr="".join(stderr_chunks),
+                        exit_code=-1,
+                        duration_ms=duration_ms,
+                        model=effective_model,
+                        command=tuple(command),
+                    )
+
+                    logger.warning(
+                        "Provider timeout: provider=%s, model=%s, timeout=%ds, "
+                        "duration_ms=%d, prompt=%s",
+                        self.provider_name,
+                        effective_model,
+                        effective_timeout,
+                        duration_ms,
+                        truncated,
+                    )
+
+                    # Close debug logger and clear process before raising
+                    debug_json_logger.close()
+                    with self._process_lock:
+                        self._current_process = None
+
+                    raise ProviderTimeoutError(
+                        f"Claude CLI timeout after {effective_timeout}s: {truncated}",
+                        partial_result=partial_result,
+                    )
+
+                # Poll interval - short enough for responsive cancel
+                time.sleep(0.1)
 
             # Wait for threads to finish
             stdout_thread.join()
             stderr_thread.join()
+
+            # Clear current process
+            with self._process_lock:
+                self._current_process = None
+
+            # Handle cancellation - return partial result
+            if cancelled:
+                duration_ms = int((time.perf_counter() - start_time) * 1000)
+                debug_json_logger.close()
+                logger.info("Returning cancelled result after %dms", duration_ms)
+                return ProviderResult(
+                    stdout="".join(response_text_parts),
+                    stderr="Cancelled by user",
+                    exit_code=-15,
+                    duration_ms=duration_ms,
+                    model=effective_model,
+                    command=tuple(command),
+                )
 
             # Store results for unified handling below
             final_returncode = returncode
@@ -533,6 +639,8 @@ class ClaudeSubprocessProvider(BaseProvider):
 
         except FileNotFoundError as e:
             logger.error("Claude CLI not found in PATH")
+            with self._process_lock:
+                self._current_process = None
             debug_json_logger.close()
             raise ProviderError("Claude CLI not found. Is 'claude' in PATH?") from e
 

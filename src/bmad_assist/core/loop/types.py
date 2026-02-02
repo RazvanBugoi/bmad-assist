@@ -9,12 +9,14 @@ Story 6.6: LoopExitReason enum.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypedDict
 
 from bmad_assist.core.state import Phase, State
+from bmad_assist.core.types import EpicId
 
 __all__ = [
     "LoopExitReason",
+    "LoopStatus",
     "GuardianDecision",
     "PhaseResult",
     "PhaseHandler",
@@ -37,6 +39,8 @@ class LoopExitReason(str, Enum):
         INTERRUPTED_SIGINT: Loop interrupted by SIGINT/Ctrl+C (exit code 130).
         INTERRUPTED_SIGTERM: Loop interrupted by SIGTERM/kill (exit code 143).
         GUARDIAN_HALT: Loop halted by Guardian for user intervention (exit code 0).
+        CANCELLED: Loop cancelled via CancellationContext (dashboard stop).
+        ERROR: Loop crashed due to unhandled exception (exit code 1).
 
     """
 
@@ -44,6 +48,38 @@ class LoopExitReason(str, Enum):
     INTERRUPTED_SIGINT = "interrupted_sigint"
     INTERRUPTED_SIGTERM = "interrupted_sigterm"
     GUARDIAN_HALT = "guardian_halt"
+    CANCELLED = "cancelled"
+    ERROR = "error"
+
+
+# =============================================================================
+# LoopStatus TypedDict - Dashboard Integration
+# =============================================================================
+
+
+class LoopStatus(TypedDict):
+    """Status returned by LoopController.get_status().
+
+    Used by REST API /api/loop/status endpoint to report loop state.
+
+    Attributes:
+        state: Current controller state ("idle", "starting", "running", "paused", "stopping").
+        running: True if loop is actively running (starting or running state).
+        paused: True if loop is paused (waiting for resume).
+        current_epic: Current epic ID or None if not running.
+        current_story: Current story ID or None if not running.
+        current_phase: Current phase name or None if not running.
+        error: Last error message if failed, None otherwise.
+
+    """
+
+    state: str
+    running: bool
+    paused: bool
+    current_epic: EpicId | None
+    current_story: str | None
+    current_phase: str | None
+    error: str | None
 
 
 # =============================================================================

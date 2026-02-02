@@ -20,7 +20,7 @@ import signal
 import socket
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -31,7 +31,11 @@ from starlette.staticfiles import StaticFiles
 from bmad_assist.core.exceptions import DashboardError
 
 # Story 22.9: Dashboard event marker for stdout parsing
+# Model tracking: MODEL_STARTED marker for terminal tabs
 from bmad_assist.core.loop.dashboard_events import DASHBOARD_EVENT_MARKER
+
+if TYPE_CHECKING:
+    from bmad_assist.dashboard.loop_controller import LoopController
 from bmad_assist.core.state import State, get_state_path, load_state
 from bmad_assist.dashboard.routes import API_ROUTES
 from bmad_assist.dashboard.sse import SSEBroadcaster
@@ -201,6 +205,7 @@ class DashboardServer:
         self._loop_running = False
         self._pause_requested = False  # Pause after current workflow completes
         self._stop_requested = False  # Stop immediately (terminate current workflow)
+        self._log_level = self._load_persisted_log_level()  # Load from file or default to 'info'
         self._loop_task: asyncio.Task[None] | None = None
         self._current_process: asyncio.subprocess.Process | None = None
 
@@ -211,6 +216,15 @@ class DashboardServer:
         self._experiment_lock = asyncio.Lock()
         self._active_experiment_run_id: str | None = None
         self._active_experiment_cancel_event: asyncio.Event | None = None
+
+        # Direct Orchestrator Integration: LoopController for in-process loop
+        # When use_direct_loop=True, uses LoopController instead of subprocess
+        self._loop_controller: LoopController | None = None
+        self._use_direct_loop = os.environ.get("BMAD_DIRECT_LOOP", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     def _ensure_paths_initialized(self) -> None:
         """Initialize paths singleton if not already done.
@@ -308,19 +322,28 @@ class DashboardServer:
     async def start_loop(self) -> dict[str, Any]:
         """Start the BMAD development loop.
 
-        Runs `bmad-assist run` as subprocess which will:
-        - Load sprint-status.yaml to find current position
-        - Continue from last story/phase
-        - Update sprint-status.yaml as it progresses
-
-        The dashboard loops workflows until pause/stop is requested.
+        When BMAD_DIRECT_LOOP=1, uses LoopController for in-process execution.
+        Otherwise runs `bmad-assist run` as subprocess.
 
         Returns:
             Status dict with loop state.
 
         """
-        if self._loop_running:
+        # Check if already running - use controller state in direct mode
+        if self._use_direct_loop and self._loop_controller is not None:
+            if self._loop_controller.is_running:
+                return {"status": "already_running", "message": "Loop is already running"}
+        elif self._loop_running:
             return {"status": "already_running", "message": "Loop is already running"}
+
+        # Reload config to pick up any changes made while server was running
+        from bmad_assist.core.config import reload_config
+
+        try:
+            reload_config(self.project_root)
+            logger.debug("Reloaded configuration before starting loop")
+        except Exception as e:
+            logger.warning("Failed to reload config: %s (using cached config)", e)
 
         # Reset flags
         self._loop_running = True
@@ -336,10 +359,52 @@ class DashboardServer:
             "🚀 Starting bmad-assist run loop...", provider="dashboard"
         )
 
-        # Start loop in background
+        # Direct Orchestrator Integration: Use LoopController when enabled
+        if self._use_direct_loop:
+            return await self._start_loop_direct()
+
+        # Start loop in background (subprocess mode)
         self._loop_task = asyncio.create_task(self._run_workflow_loop())
 
         return {"status": "started", "message": "Loop started"}
+
+    async def _start_loop_direct(self) -> dict[str, Any]:
+        """Start loop using LoopController (direct orchestrator integration).
+
+        Creates LoopController and starts run_loop() in ThreadPoolExecutor.
+        Output is captured via registered output bridge.
+
+        Returns:
+            Status dict with loop state.
+
+        """
+        from bmad_assist.core.config import load_config_with_project
+        from bmad_assist.dashboard.loop_controller import LoopController
+
+        try:
+            # Load config
+            config = load_config_with_project(project_path=self.project_root)
+
+            # Create controller if needed
+            if self._loop_controller is None:
+                self._loop_controller = LoopController(self.project_root, config)
+
+            # Start the loop
+            status = await self._loop_controller.start()
+
+            if status.get("error"):
+                self._loop_running = False
+                return {
+                    "status": "error",
+                    "message": status.get("error"),
+                }
+
+            return {"status": "started", "message": "Loop started (direct mode)"}
+
+        except Exception as e:
+            logger.exception("Failed to start direct loop: %s", e)
+            self._loop_running = False
+            return {"status": "error", "message": str(e)}
 
     async def pause_loop(self) -> dict[str, Any]:
         """Pause after current workflow completes.
@@ -410,7 +475,8 @@ class DashboardServer:
     async def stop_loop(self) -> dict[str, Any]:
         """Stop immediately - terminate current workflow.
 
-        Sends SIGTERM to the subprocess to interrupt current workflow.
+        When using LoopController, requests cancellation via cancel context.
+        Otherwise sends SIGTERM to subprocess.
 
         Story 22.10 - AC #6: When stopping while paused, also removes pause.flag
         to prevent orphaned flag files.
@@ -424,6 +490,16 @@ class DashboardServer:
 
         self._stop_requested = True
         self._loop_running = False
+
+        # Direct Orchestrator Integration: Use LoopController when enabled
+        if self._use_direct_loop and self._loop_controller is not None:
+            await self._loop_controller.stop()
+            self._loop_controller.shutdown()
+            self._loop_controller = None  # Reset for fresh config on next start
+            await self.sse_broadcaster.broadcast_output(
+                "⏹️ Loop stopped.", provider="dashboard"
+            )
+            return {"status": "stopped", "message": "Loop stopped"}
 
         # Write stop.flag for subprocess to detect (Story 22.10 - Task 3)
         stop_flag = self.project_root / ".bmad-assist" / "stop.flag"
@@ -446,6 +522,60 @@ class DashboardServer:
         await self.sse_broadcaster.broadcast_output("⏹️ Loop stopped.", provider="dashboard")
 
         return {"status": "stopped", "message": "Loop stopped"}
+
+    def _load_persisted_log_level(self) -> str:
+        """Load log level from control file, or return default.
+
+        Returns:
+            Log level from file or 'info' if file doesn't exist.
+
+        """
+        control_file = self.project_root / ".bmad-assist" / "runtime" / "log-level"
+        if control_file.exists():
+            try:
+                level = control_file.read_text().strip().lower()
+                if level in ("debug", "info", "warning"):
+                    return level
+            except Exception:
+                pass  # Fall through to default
+        return "info"
+
+    def get_log_level(self) -> str:
+        """Get current log level setting.
+
+        Returns:
+            Current log level (debug, info, warning).
+
+        """
+        return self._log_level
+
+    async def set_log_level(self, level: str) -> dict[str, Any]:
+        """Set log level for subprocess and write control file.
+
+        The subprocess watches the control file and updates its logging
+        configuration when it detects a change.
+
+        Args:
+            level: Log level (debug, info, warning).
+
+        Returns:
+            Status dict with new level.
+
+        """
+        self._log_level = level
+
+        # Write control file for subprocess to pick up
+        control_dir = self.project_root / ".bmad-assist" / "runtime"
+        control_dir.mkdir(parents=True, exist_ok=True)
+        control_file = control_dir / "log-level"
+        control_file.write_text(level)
+
+        logger.info("Log level set to: %s", level)
+        await self.sse_broadcaster.broadcast_output(
+            f"📊 Log level set to: {level.upper()}", provider="dashboard"
+        )
+
+        return {"status": "ok", "level": level}
 
     async def _run_workflow_loop(self) -> None:
         """Loop through workflows until pause/stop requested.
@@ -475,6 +605,14 @@ class DashboardServer:
             subprocess_env = os.environ.copy()
             subprocess_env["BMAD_DASHBOARD_MODE"] = "1"
             subprocess_env["BMAD_ORIGINAL_CWD"] = str(Path.cwd())
+            # Enable ANSI color output in subprocess (libraries detect PIPE as non-TTY)
+            subprocess_env["FORCE_COLOR"] = "1"
+            subprocess_env["TERM"] = "xterm-256color"
+            subprocess_env["COLORTERM"] = "truecolor"
+            # Disable Python output buffering for immediate log visibility
+            subprocess_env["PYTHONUNBUFFERED"] = "1"
+            # Pass initial log level to subprocess
+            subprocess_env["BMAD_LOG_LEVEL"] = self._log_level.upper()
 
             self._current_process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -482,6 +620,7 @@ class DashboardServer:
                 env=subprocess_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
+                start_new_session=True,  # Own process group for safe termination
             )
 
             try:
@@ -542,6 +681,13 @@ class DashboardServer:
         self._stop_requested = False
 
         await self.sse_broadcaster.broadcast_output("🏁 Loop ended", provider="dashboard")
+
+        # Broadcast loop_status SSE event to immediately update frontend button states
+        # This fixes the issue where buttons weren't updated after error or completion
+        await self.sse_broadcaster.broadcast_event(
+            "loop_status",
+            {"running": False, "paused": False, "status": "stopped"},
+        )
 
     async def _run_bmad_assist_loop(self) -> None:
         """Run workflow loop (deprecated, use _run_workflow_loop instead)."""
@@ -796,6 +942,12 @@ class DashboardServer:
 
     async def _on_shutdown(self) -> None:
         """Handle server shutdown."""
+        # Direct Orchestrator Integration: Stop and shutdown LoopController
+        if self._loop_controller is not None:
+            if self._loop_controller.is_running:
+                await self._loop_controller.stop()
+            self._loop_controller.shutdown()
+
         # Cancel the loop task if running
         if self._loop_task and not self._loop_task.done():
             self._loop_task.cancel()
@@ -838,6 +990,47 @@ class DashboardServer:
             # File exists but failed to load - log the error
             logger.warning("Failed to load state from %s: %s", state_path, e)
             return None
+
+    def get_phase_started_at(self) -> datetime | None:
+        """Get the start time of the current phase from the latest running run log.
+
+        Scans .bmad-assist/runs/ for the most recent run log with status "running"
+        and returns current_phase.started_at if available.
+
+        Returns:
+            Phase start datetime if found, None otherwise.
+
+        """
+        import yaml
+
+        runs_dir = self.project_root / ".bmad-assist" / "runs"
+        if not runs_dir.exists():
+            return None
+
+        # Find all run log YAML files, sorted by name (newest first due to timestamp)
+        run_files = sorted(runs_dir.glob("run-*.yaml"), reverse=True)
+
+        for run_file in run_files:
+            try:
+                with open(run_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+
+                if data and data.get("status") == "running":
+                    current_phase = data.get("current_phase")
+                    if current_phase and current_phase.get("started_at"):
+                        started_at_str = current_phase["started_at"]
+                        # Parse ISO format datetime
+                        if isinstance(started_at_str, str):
+                            return datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+                        elif isinstance(started_at_str, datetime):
+                            return started_at_str
+                    # Found running log but no current_phase - stop searching
+                    return None
+            except Exception as e:
+                logger.debug("Failed to read run log %s: %s", run_file, e)
+                continue
+
+        return None
 
     def get_sprint_status(self) -> dict[str, Any]:
         """Get current sprint status from project state.
@@ -941,8 +1134,8 @@ class DashboardServer:
 
             result["epics"].append(epic_data)
 
-        # Sort epics by id
-        result["epics"].sort(key=lambda e: (int(e["id"]) if str(e["id"]).isdigit() else e["id"]))
+        # Sort epics by id (numeric first, then string)
+        result["epics"].sort(key=lambda e: (0, int(e["id"])) if str(e["id"]).isdigit() else (1, str(e["id"])))
 
         return result
 
@@ -1845,6 +2038,20 @@ class DashboardServer:
 
         """
         import uvicorn
+
+        # Filter out noisy polling endpoints from access log
+        class QuietPollFilter(logging.Filter):
+            """Filter out high-frequency polling requests from access log."""
+
+            def filter(self, record: logging.LogRecord) -> bool:
+                msg = record.getMessage()
+                # Skip /api/loop/status (polled every 2s by dashboard)
+                if "/api/loop/status" in msg:
+                    return False
+                return True
+
+        uvicorn_access_logger = logging.getLogger("uvicorn.access")
+        uvicorn_access_logger.addFilter(QuietPollFilter())
 
         app = self.create_app()
 

@@ -234,7 +234,7 @@ class TestOpenCodeProviderErrors:
         """Test AC7: invoke() raises ProviderTimeoutError on wait timeout."""
         with patch("bmad_assist.providers.opencode.Popen") as mock_popen:
             mock_popen.return_value = create_opencode_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["opencode"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -248,7 +248,7 @@ class TestOpenCodeProviderErrors:
 
         with patch("bmad_assist.providers.opencode.Popen") as mock_popen:
             mock_popen.return_value = create_opencode_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["opencode"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -264,7 +264,7 @@ class TestOpenCodeProviderErrors:
         """Test AC7: Timeout error includes partial_result with collected data."""
         with patch("bmad_assist.providers.opencode.Popen") as mock_popen:
             mock_popen.return_value = create_opencode_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["opencode"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:

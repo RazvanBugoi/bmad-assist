@@ -79,7 +79,7 @@
             <p class="text-muted-foreground mb-4">
                 Current: <span x-text="queue.current?.workflow" class="text-foreground"></span>
                 <span x-text="`${queue.current?.epic_num}.${queue.current?.story_num}`" class="text-foreground tabular-nums"></span>
-                (<span x-text="`${queue.current?.progress || 0}%`" class="tabular-nums"></span> done)
+                (<span x-text="formatElapsedTime(queue.current?.phase_started_at)" class="tabular-nums"></span>)
             </p>
 
             <p class="mb-4">What should happen with your new task?</p>

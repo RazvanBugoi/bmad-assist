@@ -92,17 +92,23 @@ def emit_workflow_status(
         DASHBOARD_EVENT:{"type":"workflow_status","timestamp":"2026-01-15T08:00:00Z",...}
 
     """
+    now = datetime.now(UTC)
+    data: dict[str, object] = {
+        "current_epic": epic_num,
+        "current_story": story_id,
+        "current_phase": phase,
+        "phase_status": phase_status,
+    }
+    # Include phase_started_at for in-progress phases (dashboard elapsed time display)
+    if phase_status == "in-progress":
+        data["phase_started_at"] = now.isoformat()
+
     event_data = {
         "type": "workflow_status",
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": now.isoformat(),
         "run_id": run_id,
         "sequence_id": sequence_id,
-        "data": {
-            "current_epic": epic_num,
-            "current_story": story_id,
-            "current_phase": phase,
-            "phase_status": phase_status,
-        },
+        "data": data,
     }
     _emit_dashboard_event(event_data)
 
@@ -441,13 +447,88 @@ def emit_phase_complete(
 
 
 # =============================================================================
+# Model Invocation Tracking
+# =============================================================================
+
+# Model started marker - separate from DASHBOARD_EVENT for cleaner parsing
+MODEL_STARTED_MARKER = "MODEL_STARTED:"
+
+# Counter for generating unique tab IDs per model
+_model_invocation_counters: dict[str, int] = {}
+
+
+def emit_model_started(
+    model: str,
+    role: str | None = None,
+    provider: str | None = None,
+) -> str | None:
+    """Emit model_started event when a model invocation begins.
+
+    This creates a new tab in the dashboard terminal for this model invocation.
+    The tab ID is returned so it can be associated with output.
+
+    Args:
+        model: Model identifier (e.g., "opus", "glm-4.7", "gemini-2.5-flash-lite").
+        role: Optional role descriptor (e.g., "master", "helper", "validator-1").
+        provider: Optional provider name (e.g., "claude", "gemini", "glm").
+
+    Returns:
+        Tab ID string (e.g., "opus-1", "glm-4.7-2") or None if not in dashboard mode.
+
+    Example output:
+        MODEL_STARTED:{"model":"opus","role":"master","tab_id":"opus-1","provider":"claude"}
+
+    """
+    # Only emit when running as dashboard subprocess
+    if os.environ.get("BMAD_DASHBOARD_MODE") != "1":
+        return None
+
+    # Generate unique tab ID for this model
+    global _model_invocation_counters
+    if model not in _model_invocation_counters:
+        _model_invocation_counters[model] = 0
+    _model_invocation_counters[model] += 1
+    count = _model_invocation_counters[model]
+    tab_id = f"{model}-{count}"
+
+    try:
+        payload = {
+            "model": model,
+            "tab_id": tab_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        if role:
+            payload["role"] = role
+        if provider:
+            payload["provider"] = provider
+
+        json_payload = json.dumps(payload)
+        print(f"{MODEL_STARTED_MARKER}{json_payload}")
+        sys.stdout.flush()
+
+        logger.debug("Emitted model_started: model=%s, tab_id=%s, role=%s", model, tab_id, role)
+        return tab_id
+
+    except Exception as e:
+        logger.debug("Failed to emit model_started (ignored): %s", e)
+        return None
+
+
+def reset_model_counters() -> None:
+    """Reset model invocation counters (called at loop start)."""
+    global _model_invocation_counters
+    _model_invocation_counters = {}
+
+
+# =============================================================================
 # Re-export for convenience
 # =============================================================================
 
 
 __all__ = [
-    # Marker constant
+    # Marker constants
     "DASHBOARD_EVENT_MARKER",
+    "MODEL_STARTED_MARKER",
     # Run ID generation
     "generate_run_id",
     # Story ID parsing
@@ -463,4 +544,7 @@ __all__ = [
     # Story 22.11: Validator progress and phase complete events
     "emit_validator_progress",
     "emit_phase_complete",
+    # Model invocation tracking
+    "emit_model_started",
+    "reset_model_counters",
 ]

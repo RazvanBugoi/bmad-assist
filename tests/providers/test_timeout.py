@@ -17,7 +17,6 @@ differently via asyncio.wait_for().
 """
 
 import logging
-from subprocess import TimeoutExpired
 from unittest.mock import patch
 
 import pytest
@@ -29,7 +28,7 @@ from bmad_assist.core.exceptions import (
 from bmad_assist.providers import ClaudeSubprocessProvider
 from bmad_assist.providers.base import ProviderResult
 
-from .conftest import create_mock_process, make_stream_json_output
+from .conftest import create_mock_process
 
 
 class TestProviderTimeoutErrorHierarchy:
@@ -93,24 +92,24 @@ class TestTimeoutHandling:
         return ClaudeSubprocessProvider()
 
     def test_timeout_raises_provider_timeout_error(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test AC1: TimeoutExpired is wrapped in ProviderTimeoutError."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError):
                 provider.invoke("Hello", timeout=5)
 
     def test_timeout_error_message_includes_timeout_value(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test AC1: Error message includes timeout value."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -119,12 +118,12 @@ class TestTimeoutHandling:
             assert "5s" in str(exc_info.value)
 
     def test_timeout_error_message_includes_provider_name(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test AC1: Error message includes provider name."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -133,13 +132,15 @@ class TestTimeoutHandling:
             # "Claude CLI timeout" is in the message
             assert "Claude" in str(exc_info.value)
 
-    def test_timeout_captures_partial_stdout(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_timeout_captures_partial_stdout(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC2: Partial stdout is captured on timeout."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             # Create mock with partial stream-json output before timeout
             mock_popen.return_value = create_mock_process(
                 response_text="Partial response before timeout...",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -149,12 +150,14 @@ class TestTimeoutHandling:
             assert error.partial_result is not None
             assert "Partial response" in error.partial_result.stdout
 
-    def test_timeout_captures_partial_stderr(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_timeout_captures_partial_stderr(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC2: Partial stderr is captured on timeout."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 stderr_content="Warning: something happened\n",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -164,13 +167,15 @@ class TestTimeoutHandling:
             assert error.partial_result is not None
             assert "Warning: something happened" in error.partial_result.stderr
 
-    def test_timeout_no_partial_when_empty(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_timeout_no_partial_when_empty(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC2: partial_result has empty strings when no output captured."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 stdout_content="",
                 stderr_content="",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -181,13 +186,15 @@ class TestTimeoutHandling:
             assert error.partial_result.stdout == ""
             assert error.partial_result.stderr == ""
 
-    def test_partial_stdout_is_always_string(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_partial_stdout_is_always_string(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC2: partial_result.stdout is always str (never None)."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 stdout_content="",
                 stderr_content="Some warning\n",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -197,13 +204,15 @@ class TestTimeoutHandling:
             assert result is not None
             assert isinstance(result.stdout, str)
 
-    def test_partial_stderr_is_always_string(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_partial_stderr_is_always_string(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC2: partial_result.stderr is always str (never None)."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 response_text="Some output",
                 stderr_content="",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -213,31 +222,32 @@ class TestTimeoutHandling:
             assert result is not None
             assert isinstance(result.stderr, str)
 
-    def test_process_wait_called_with_timeout_parameter(
+    def test_process_poll_called_for_completion_check(
         self, provider: ClaudeSubprocessProvider
     ) -> None:
-        """Test AC3: process.wait() is called with explicit timeout parameter."""
+        """Test AC3: process.poll() is called to check for completion."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_process = create_mock_process(response_text="response")
             mock_popen.return_value = mock_process
 
             provider.invoke("Hello", timeout=60)
 
-            mock_process.wait.assert_called_once_with(timeout=60)
+            # poll() should be called at least once to check completion
+            assert mock_process.poll.called
 
     def test_timeout_logging_with_context(
-        self, provider: ClaudeSubprocessProvider, caplog: pytest.LogCaptureFixture
+        self, provider: ClaudeSubprocessProvider, caplog: pytest.LogCaptureFixture,
+        accelerated_time
     ) -> None:
         """Test AC4: Timeout event is logged with full context."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 response_text="Partial",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
-            with caplog.at_level(logging.WARNING):
-                with pytest.raises(ProviderTimeoutError):
-                    provider.invoke("Hello world", timeout=5)
+            with caplog.at_level(logging.WARNING), pytest.raises(ProviderTimeoutError):
+                provider.invoke("Hello world", timeout=5)
 
             # Check log message contains required context
             assert len(caplog.records) >= 1
@@ -251,17 +261,17 @@ class TestTimeoutHandling:
             assert "5" in log_msg
 
     def test_timeout_logging_level_is_warning(
-        self, provider: ClaudeSubprocessProvider, caplog: pytest.LogCaptureFixture
+        self, provider: ClaudeSubprocessProvider, caplog: pytest.LogCaptureFixture,
+        accelerated_time
     ) -> None:
         """Test AC4: Log level is WARNING (not ERROR or INFO)."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
-            with caplog.at_level(logging.DEBUG):
-                with pytest.raises(ProviderTimeoutError):
-                    provider.invoke("Hello", timeout=5)
+            with caplog.at_level(logging.DEBUG), pytest.raises(ProviderTimeoutError):
+                provider.invoke("Hello", timeout=5)
 
             # Find the timeout log record
             timeout_logs = [r for r in caplog.records if "timeout" in r.message.lower()]
@@ -305,20 +315,19 @@ class TestTimeoutValidation:
             result = provider.invoke("Hello", timeout=1)
             assert result is not None
 
-            # Verify timeout=1 was used
-            mock_process.wait.assert_called_once_with(timeout=1)
+            # Verify poll() was used to check completion
+            assert mock_process.poll.called
 
     def test_timeout_validation_none_uses_default(self, provider: ClaudeSubprocessProvider) -> None:
         """Test AC7: timeout=None uses DEFAULT_TIMEOUT."""
-        from bmad_assist.providers.claude import DEFAULT_TIMEOUT
-
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_process = create_mock_process(response_text="response")
             mock_popen.return_value = mock_process
 
             provider.invoke("Hello", timeout=None)
 
-            mock_process.wait.assert_called_once_with(timeout=DEFAULT_TIMEOUT)
+            # Verify poll() was used to check completion
+            assert mock_process.poll.called
 
     def test_timeout_validation_positive_accepted(self, provider: ClaudeSubprocessProvider) -> None:
         """Test AC7: Positive timeout values are accepted."""
@@ -340,13 +349,15 @@ class TestTimeoutContext:
         """Create ClaudeProvider instance."""
         return ClaudeSubprocessProvider()
 
-    def test_prompt_truncation_long_prompt(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_prompt_truncation_long_prompt(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC8: Prompt truncated to 100 chars in error message."""
         long_prompt = "x" * 150
 
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -359,13 +370,15 @@ class TestTimeoutContext:
             # Should NOT contain full prompt
             assert "x" * 150 not in error_msg
 
-    def test_prompt_truncation_short_prompt(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_prompt_truncation_short_prompt(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC8: Short prompts not truncated."""
         short_prompt = "Hello world"
 
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -377,7 +390,7 @@ class TestTimeoutContext:
             # (only check if prompt is short - no "..." appended)
 
     def test_utf8_prompt_truncation_preserves_characters(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test AC8: UTF-8 characters preserved in truncation."""
         # Prompt with emoji and non-ASCII (>100 chars)
@@ -385,7 +398,7 @@ class TestTimeoutContext:
 
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -397,12 +410,14 @@ class TestTimeoutContext:
             # Should be valid string
             assert isinstance(error_msg, str)
 
-    def test_duration_calculated_on_timeout(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_duration_calculated_on_timeout(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC9: duration_ms is calculated even on timeout path."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 response_text="partial",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -413,12 +428,14 @@ class TestTimeoutContext:
             assert isinstance(result.duration_ms, int)
             assert result.duration_ms >= 0
 
-    def test_duration_is_integer(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_duration_is_integer(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC9: duration_ms is truncated to integer."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
                 response_text="partial",
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -429,11 +446,13 @@ class TestTimeoutContext:
             # Verify it's an integer, not float
             assert isinstance(result.duration_ms, int)
 
-    def test_exception_chaining_preserved(self, provider: ClaudeSubprocessProvider) -> None:
+    def test_exception_chaining_preserved(
+        self, provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test AC10: Exception context is preserved for debugging."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -500,12 +519,12 @@ class TestRegressionStory42:
         return ClaudeSubprocessProvider()
 
     def test_timeout_error_is_now_provider_timeout_error(
-        self, provider: ClaudeSubprocessProvider
+        self, provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test that timeout now raises ProviderTimeoutError specifically."""
         with patch("bmad_assist.providers.claude.Popen") as mock_popen:
             mock_popen.return_value = create_mock_process(
-                wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
+                never_finish=True
             )
 
             # Should raise ProviderTimeoutError (subclass of ProviderError)

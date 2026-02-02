@@ -16,7 +16,6 @@ Test Structure:
 
 """
 
-from subprocess import TimeoutExpired
 from unittest.mock import patch
 
 import pytest
@@ -468,7 +467,9 @@ class TestOutputCaptureConfig:
 class TestTimeoutEncodingHandling:
     """Test encoding handling during timeout scenarios."""
 
-    def test_timeout_with_partial_output(self, claude_provider: ClaudeSubprocessProvider) -> None:
+    def test_timeout_with_partial_output(
+        self, claude_provider: ClaudeSubprocessProvider, accelerated_time
+    ) -> None:
         """Test timeout partial output with streamed content."""
         from bmad_assist.core.exceptions import ProviderTimeoutError
 
@@ -477,7 +478,7 @@ class TestTimeoutEncodingHandling:
             mock_popen.return_value = create_mock_process(
                 response_text="partial output before timeout",
                 stderr_content="error output\n",
-                wait_side_effect=TimeoutExpired(["claude"], 5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:
@@ -492,7 +493,7 @@ class TestTimeoutEncodingHandling:
             assert "error output" in partial.stderr
 
     def test_timeout_with_str_partial_output(
-        self, claude_provider: ClaudeSubprocessProvider
+        self, claude_provider: ClaudeSubprocessProvider, accelerated_time
     ) -> None:
         """Test timeout partial output handles str correctly."""
         from bmad_assist.core.exceptions import ProviderTimeoutError
@@ -501,7 +502,7 @@ class TestTimeoutEncodingHandling:
             mock_popen.return_value = create_mock_process(
                 response_text="partial string output",
                 stderr_content="error string\n",
-                wait_side_effect=TimeoutExpired(["claude"], 5),
+                never_finish=True,
             )
 
             with pytest.raises(ProviderTimeoutError) as exc_info:

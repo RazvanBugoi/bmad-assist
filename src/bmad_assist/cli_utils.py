@@ -5,6 +5,7 @@ shared across CLI command modules.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -123,8 +124,14 @@ def _setup_logging(verbose: bool, quiet: bool) -> None:
         Default log level is WARNING (changed from INFO to reduce noise).
         Phase banners are always shown regardless of log level.
 
+        BMAD_LOG_LEVEL env var can override the level (for dashboard control).
+
     """
-    if verbose:
+    # Check for dashboard-controlled log level override
+    env_level = os.environ.get("BMAD_LOG_LEVEL", "").upper()
+    if env_level in ("DEBUG", "INFO", "WARNING"):
+        level = getattr(logging, env_level)
+    elif verbose:
         level = logging.DEBUG
     elif quiet:
         level = logging.ERROR
@@ -134,17 +141,78 @@ def _setup_logging(verbose: bool, quiet: bool) -> None:
     # Clear any existing handlers to avoid duplicates
     logging.root.handlers.clear()
 
+    # Create handler with explicit level (basicConfig doesn't set handler level)
+    handler = RichHandler(console=console, rich_tracebacks=True, show_path=False)
+    handler.setLevel(level)
+
     logging.basicConfig(
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
+        handlers=[handler],
     )
 
     # Suppress HTTP client loggers (security: prevent secret leakage)
     # These loggers can expose sensitive URLs (Telegram bot tokens, Discord webhooks)
     for logger_name in ("httpx", "httpcore", "urllib3"):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+
+# Track last known log level for change detection
+_current_log_level: str = "WARNING"
+
+
+def update_log_level(level: str) -> bool:
+    """Update logging level at runtime.
+
+    Args:
+        level: Log level name (DEBUG, INFO, WARNING).
+
+    Returns:
+        True if level was changed, False if invalid or same.
+
+    """
+    global _current_log_level
+    level = level.upper()
+    if level not in ("DEBUG", "INFO", "WARNING"):
+        return False
+
+    if level == _current_log_level:
+        return False
+
+    log_level = getattr(logging, level)
+
+    # Update root logger level
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # CRITICAL: Also update all handler levels
+    # Without this, handlers keep their original level and still emit DEBUG messages
+    for handler in root_logger.handlers:
+        handler.setLevel(log_level)
+
+    _current_log_level = level
+    return True
+
+
+def check_log_level_file(project_path: Path) -> None:
+    """Check control file for log level changes (called periodically by runner).
+
+    Reads .bmad-assist/runtime/log-level and updates logging if changed.
+    Silent on errors - this is best-effort runtime adjustment.
+
+    Args:
+        project_path: Project root directory.
+
+    """
+    try:
+        control_file = project_path / ".bmad-assist" / "runtime" / "log-level"
+        if control_file.exists():
+            level = control_file.read_text().strip().upper()
+            if update_log_level(level):
+                logging.info("Log level changed to: %s", level)
+    except Exception:
+        pass  # Silent fail - best effort
 
 
 def _validate_project_path(project: str) -> Path:

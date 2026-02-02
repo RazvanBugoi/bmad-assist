@@ -240,6 +240,7 @@ def _parse_dev_status_entry(key: str, status: str) -> SprintStatusEntry:
         "done": "done",
         "blocked": "blocked",
         "deferred": "deferred",
+        "optional": "optional",
         # Legacy status aliases
         "drafted": "backlog",  # treat drafted as backlog
         "completed": "done",  # treat completed as done

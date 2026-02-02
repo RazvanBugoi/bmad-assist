@@ -320,6 +320,7 @@ class TestBaseProviderAbstractMethods:
             "color_index",
             "display_model",
             "thinking",
+            "cancel_token",
         ]
 
         # Check prompt is positional

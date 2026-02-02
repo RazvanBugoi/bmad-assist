@@ -25,6 +25,7 @@ def _print_phase_banner(phase: str, epic: EpicId | None, story: int | str | None
 
     This ensures visibility of phase transitions even when log level is WARNING.
     When stdout is piped, Rich automatically strips ANSI codes.
+    Also sends to dashboard output hook for SSE in direct orchestrator mode.
 
     Args:
         phase: Phase name (e.g., 'CREATE_STORY').
@@ -32,21 +33,29 @@ def _print_phase_banner(phase: str, epic: EpicId | None, story: int | str | None
         story: Story number or identifier, or None.
 
     """
+    # Build banner text
+    banner = f"[{phase.upper().replace('_', ' ')}]"
+    if epic is not None:
+        banner += f" Epic {epic}"
+    if story is not None:
+        banner += f" Story {story}"
+
+    # Print to stdout (Rich console with styling)
     try:
-        banner = f"[{phase.upper().replace('_', ' ')}]"
-        if epic is not None:
-            banner += f" Epic {epic}"
-        if story is not None:
-            banner += f" Story {story}"
         console.print(banner, style="bold bright_white")
     except Exception:
-        # F10 FIX: Fallback banner with proper None handling
-        parts = [f"[{phase.upper().replace('_', ' ')}]"]
-        if epic is not None:
-            parts.append(f"Epic {epic}")
-        if story is not None:
-            parts.append(f"Story {story}")
-        print(" ".join(parts))
+        # Fallback to plain print
+        print(banner)
+
+    # Send to dashboard output hook (for SSE in direct mode)
+    try:
+        from bmad_assist.dashboard import get_output_hook
+
+        hook = get_output_hook()
+        if hook is not None:
+            hook(banner, "dashboard")
+    except Exception:
+        pass  # Dashboard not available or hook failed
 
 # Type alias for state parameter
 LoopState = State

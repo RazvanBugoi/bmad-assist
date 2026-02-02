@@ -125,6 +125,7 @@ async def get_state(request: Request) -> JSONResponse:
     - current_epic: Current epic ID (int or str like "testarch")
     - current_story: Current story ID (e.g., "22.3")
     - current_phase: Current phase in snake_case (e.g., "dev_story")
+    - phase_started_at: ISO timestamp of when current phase started (from run log)
     - completed_stories: List of completed story IDs (always a list, may be empty)
     - completed_epics: List of completed epic IDs (always a list, may be empty)
     """
@@ -135,12 +136,16 @@ async def get_state(request: Request) -> JSONResponse:
         if state is None:
             return JSONResponse({"has_position": False})
 
+        # Get phase start time from run log
+        phase_started_at = server.get_phase_started_at()
+
         return JSONResponse(
             {
                 "has_position": state.current_phase is not None,
                 "current_epic": state.current_epic,
                 "current_story": state.current_story,
                 "current_phase": state.current_phase.value if state.current_phase else None,
+                "phase_started_at": phase_started_at.isoformat() if phase_started_at else None,
                 "completed_stories": state.completed_stories,
                 "completed_epics": state.completed_epics,
             }

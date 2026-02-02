@@ -45,6 +45,7 @@ from bmad_assist.providers.base import (
     ProviderResult,
     extract_tool_details,
     format_tag,
+    should_print_progress,
     validate_settings_file,
     write_progress,
 )
@@ -216,6 +217,7 @@ class AmpProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute Amp CLI with the given prompt using JSON streaming.
 
@@ -407,6 +409,7 @@ class AmpProvider(BaseProvider):
                     errors="replace",
                     cwd=cwd,
                     env=env,
+                    start_new_session=True,  # Own process group for safe termination
                 )
 
                 # Write prompt to stdin and close it
@@ -414,13 +417,9 @@ class AmpProvider(BaseProvider):
                     process.stdin.write(final_prompt)
                     process.stdin.close()
 
-                # Print output only in verbose/debug mode
-                print_output = logger.isEnabledFor(logging.DEBUG)
-
                 def process_json_stream(
                     stream: Any,
                     text_parts: list[str],
-                    print_progress: bool,
                     json_logger: DebugJsonLogger,
                     color_idx: int | None,
                 ) -> None:
@@ -441,7 +440,7 @@ class AmpProvider(BaseProvider):
 
                             if msg_type == "system":
                                 session_id = msg.get("session_id", "?")
-                                if print_progress:
+                                if should_print_progress():
                                     tag = format_tag("INIT", color_idx)
                                     write_progress(f"{tag} Session: {session_id}")
 
@@ -454,7 +453,7 @@ class AmpProvider(BaseProvider):
                                             text = item.get("text", "")
                                             if text:
                                                 text_parts.append(text)
-                                                if print_progress:
+                                                if should_print_progress():
                                                     preview = text[:200]
                                                     if len(text) > 200:
                                                         preview += "..."
@@ -480,7 +479,7 @@ class AmpProvider(BaseProvider):
                                                     tool_name,
                                                     normalized_tool_name,
                                                 )
-                                            if print_progress:
+                                            if should_print_progress():
                                                 tool_input = item.get("input", {})
                                                 details = extract_tool_details(
                                                     normalized_tool_name, tool_input
@@ -499,13 +498,13 @@ class AmpProvider(BaseProvider):
                                 if result_text and not text_parts:
                                     # Only use result if we haven't captured text elsewhere
                                     text_parts.append(result_text)
-                                if print_progress:
+                                if should_print_progress():
                                     duration = msg.get("duration_ms", 0)
                                     tag = format_tag("RESULT", color_idx)
                                     write_progress(f"{tag} duration={duration}ms")
 
                         except json.JSONDecodeError:
-                            if print_progress:
+                            if should_print_progress():
                                 tag = format_tag("RAW", color_idx)
                                 write_progress(f"{tag} {stripped}")
 
@@ -514,13 +513,12 @@ class AmpProvider(BaseProvider):
                 def read_stderr(
                     stream: Any,
                     chunks: list[str],
-                    print_lines: bool,
                     color_idx: int | None,
                 ) -> None:
                     """Read stderr stream."""
                     for line in iter(stream.readline, ""):
                         chunks.append(line)
-                        if print_lines:
+                        if should_print_progress():
                             stripped = line.rstrip()
                             tag = format_tag("ERR", color_idx)
                             write_progress(f"{tag} {stripped}")
@@ -532,19 +530,18 @@ class AmpProvider(BaseProvider):
                     args=(
                         process.stdout,
                         response_text_parts,
-                        print_output,
                         debug_json_logger,
                         color_index,
                     ),
                 )
                 stderr_thread = threading.Thread(
                     target=read_stderr,
-                    args=(process.stderr, stderr_chunks, print_output, color_index),
+                    args=(process.stderr, stderr_chunks, color_index),
                 )
                 stdout_thread.start()
                 stderr_thread.start()
 
-                if print_output:
+                if should_print_progress():
                     shown_model = display_model or effective_model
                     tag = format_tag("START", color_index)
                     write_progress(f"{tag} Invoking Amp CLI (mode={shown_model})...")

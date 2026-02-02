@@ -43,6 +43,7 @@ from bmad_assist.providers.base import (
     ProviderResult,
     extract_tool_details,
     format_tag,
+    should_print_progress,
     validate_settings_file,
     write_progress,
 )
@@ -214,6 +215,7 @@ class OpenCodeProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute OpenCode CLI with the given prompt using JSON streaming.
 
@@ -407,6 +409,7 @@ class OpenCodeProvider(BaseProvider):
                     errors="replace",
                     cwd=cwd,
                     env=env,
+                    start_new_session=True,  # Own process group for safe termination
                 )
 
                 # Write prompt to stdin and close it
@@ -414,13 +417,9 @@ class OpenCodeProvider(BaseProvider):
                     process.stdin.write(final_prompt)
                     process.stdin.close()
 
-                # Print output only in verbose/debug mode
-                print_output = logger.isEnabledFor(logging.DEBUG)
-
                 def process_json_stream(
                     stream: Any,
                     text_parts: list[str],
-                    print_progress: bool,
                     json_logger: DebugJsonLogger,
                     color_idx: int | None,
                 ) -> None:
@@ -441,7 +440,7 @@ class OpenCodeProvider(BaseProvider):
 
                             if msg_type == "step_start":
                                 session_id = msg.get("sessionID", "?")
-                                if print_progress:
+                                if should_print_progress():
                                     tag = format_tag("INIT", color_idx)
                                     write_progress(f"{tag} Session: {session_id}")
 
@@ -451,7 +450,7 @@ class OpenCodeProvider(BaseProvider):
                                     text = part.get("text", "")
                                     if text:
                                         text_parts.append(text)
-                                        if print_progress:
+                                        if should_print_progress():
                                             preview = text[:200]
                                             if len(text) > 200:
                                                 preview += "..."
@@ -478,7 +477,7 @@ class OpenCodeProvider(BaseProvider):
                                         tool_name,
                                         normalized_tool_name,
                                     )
-                                if print_progress:
+                                if should_print_progress():
                                     state = part.get("state", {})
                                     tool_input = state.get("input", {})
                                     details = extract_tool_details(normalized_tool_name, tool_input)
@@ -489,7 +488,7 @@ class OpenCodeProvider(BaseProvider):
                                         write_progress(f"{tag}")
 
                             elif msg_type == "step_finish":
-                                if print_progress:
+                                if should_print_progress():
                                     part = msg.get("part", {})
                                     cost = part.get("cost", 0)
                                     tokens = part.get("tokens", {})
@@ -497,7 +496,7 @@ class OpenCodeProvider(BaseProvider):
                                     write_progress(f"{tag} cost={cost:.4f} tokens={tokens}")
 
                         except json.JSONDecodeError:
-                            if print_progress:
+                            if should_print_progress():
                                 tag = format_tag("RAW", color_idx)
                                 write_progress(f"{tag} {stripped}")
 
@@ -506,13 +505,12 @@ class OpenCodeProvider(BaseProvider):
                 def read_stderr(
                     stream: Any,
                     chunks: list[str],
-                    print_lines: bool,
                     color_idx: int | None,
                 ) -> None:
                     """Read stderr stream."""
                     for line in iter(stream.readline, ""):
                         chunks.append(line)
-                        if print_lines:
+                        if should_print_progress():
                             stripped = line.rstrip()
                             tag = format_tag("ERR", color_idx)
                             write_progress(f"{tag} {stripped}")
@@ -524,19 +522,18 @@ class OpenCodeProvider(BaseProvider):
                     args=(
                         process.stdout,
                         response_text_parts,
-                        print_output,
                         debug_json_logger,
                         color_index,
                     ),
                 )
                 stderr_thread = threading.Thread(
                     target=read_stderr,
-                    args=(process.stderr, stderr_chunks, print_output, color_index),
+                    args=(process.stderr, stderr_chunks, color_index),
                 )
                 stdout_thread.start()
                 stderr_thread.start()
 
-                if print_output:
+                if should_print_progress():
                     shown_model = display_model or effective_model
                     tag = format_tag("START", color_index)
                     write_progress(f"{tag} Invoking OpenCode CLI (model={shown_model})...")

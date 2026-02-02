@@ -31,6 +31,7 @@ Example:
 
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from subprocess import PIPE, Popen, TimeoutExpired
@@ -52,6 +53,7 @@ from bmad_assist.providers.base import (
     calculate_retry_delay,
     format_tag,
     is_transient_error,
+    should_print_progress,
     start_stream_reader_threads,
     validate_settings_file,
     write_progress,
@@ -139,6 +141,7 @@ class CursorAgentProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute Cursor Agent CLI with the given prompt.
 
@@ -231,26 +234,19 @@ class CursorAgentProvider(BaseProvider):
                 stdout_chunks: list[str] = []
                 stderr_chunks: list[str] = []
                 start_time = time.perf_counter()
-                print_output = logger.isEnabledFor(logging.DEBUG)
 
-                # Create callbacks for stream readers
-                stdout_callback = None
-                stderr_callback = None
-
-                if print_output:
-
-                    def _stdout_cb(line: str) -> None:
+                # Create callbacks for stream readers (check log level dynamically)
+                def _stdout_cb(line: str) -> None:
+                    if should_print_progress():
                         stripped = line.rstrip()
                         tag = format_tag("OUT", color_index)
                         write_progress(f"{tag} {stripped}")
 
-                    def _stderr_cb(line: str) -> None:
+                def _stderr_cb(line: str) -> None:
+                    if should_print_progress():
                         stripped = line.rstrip()
                         tag = format_tag("ERR", color_index)
                         write_progress(f"{tag} {stripped}")
-
-                    stdout_callback = _stdout_cb
-                    stderr_callback = _stderr_cb
 
                 try:
                     env = os.environ.copy()
@@ -267,6 +263,7 @@ class CursorAgentProvider(BaseProvider):
                         errors="replace",
                         cwd=cwd,
                         env=env,
+                        start_new_session=True,  # Own process group for safe termination
                     )
 
                     if process.stdin:
@@ -277,11 +274,11 @@ class CursorAgentProvider(BaseProvider):
                         process,
                         stdout_chunks,
                         stderr_chunks,
-                        stdout_callback=stdout_callback,
-                        stderr_callback=stderr_callback,
+                        stdout_callback=_stdout_cb,
+                        stderr_callback=_stderr_cb,
                     )
 
-                    if print_output:
+                    if should_print_progress():
                         shown_model = display_model or effective_model
                         tag = format_tag("START", color_index)
                         write_progress(

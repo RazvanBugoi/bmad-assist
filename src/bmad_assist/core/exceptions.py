@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BmadAssistError",
+    "CancelledError",
     "ConfigError",
     "ConfigValidationError",
     "ParserError",
@@ -41,6 +42,19 @@ class BmadAssistError(Exception):
 
     All custom exceptions in bmad-assist should inherit from this class
     to enable unified exception handling and clear error boundaries.
+    """
+
+    pass
+
+
+class CancelledError(BmadAssistError):
+    """Raised when operation is cancelled via CancellationContext.
+
+    This is NOT asyncio.CancelledError - it's for sync cancellation via
+    threading.Event in the LoopController/provider integration.
+
+    Used at safe checkpoints in run_loop() when the cancel token is set,
+    allowing the loop to exit gracefully with state preserved.
     """
 
     pass

@@ -388,8 +388,11 @@ def load_config_with_project(
             # Custom path provided (for testing)
             resolved_cwd_config = Path(cwd_config_path).expanduser()
         else:
-            # Auto-detect from cwd
-            cwd_path = Path.cwd()
+            # Auto-detect from cwd, respecting BMAD_ORIGINAL_CWD env var
+            # (set by dashboard subprocess to preserve original working directory)
+            from bmad_assist.core.io import get_original_cwd
+
+            cwd_path = get_original_cwd()
             resolved_cwd_config = cwd_path / PROJECT_CONFIG_NAME
             # Only use if different from project path (don't load twice)
             if cwd_path.resolve() == resolved_project.resolve():

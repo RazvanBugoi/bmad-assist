@@ -54,6 +54,7 @@ def make_claude_stream_json_output(
         The text appears ONLY in the assistant message, not in the result message,
         because the provider extracts text from assistant messages. The result
         message contains metadata only (cost, duration, turns).
+
     """
     lines = [
         json.dumps({"type": "system", "subtype": "init", "session_id": session_id}),
@@ -83,15 +84,20 @@ def create_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    poll_returns_none_count: int = 1,
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for testing.
 
     Args:
         stdout_content: Raw content for stdout. If None, generates stream-json.
         stderr_content: Content to return from stderr.readline()
-        returncode: Exit code to return from wait()
+        returncode: Exit code to return from poll() when done
         wait_side_effect: Exception to raise from wait() (e.g., TimeoutExpired)
         response_text: Text to include in stream-json output (if stdout_content is None)
+        poll_returns_none_count: Number of poll() calls that return None before
+            returning returncode. Set to 1 for instant completion.
+        never_finish: If True, poll() always returns None (for timeout tests).
 
     Returns:
         MagicMock configured to behave like a Popen process
@@ -129,10 +135,29 @@ def create_mock_process(
     mock_process.stdin.write_args = write_args  # type: ignore
     mock_process.stdin.close = MagicMock()
 
-    if wait_side_effect:
-        mock_process.wait.side_effect = wait_side_effect
+    # Mock poll() for the polling loop (used by claude.py and others)
+    if never_finish:
+        # Always return None (process never finishes - for timeout tests)
+        mock_process.poll.return_value = None
+        # Also set wait to raise TimeoutExpired for providers using wait()
+        mock_process.wait.side_effect = TimeoutExpired(cmd=["mock"], timeout=5)
     else:
-        mock_process.wait.return_value = returncode
+        # Return None poll_returns_none_count times, then returncode
+        poll_call_count = [0]
+
+        def poll_side_effect():
+            poll_call_count[0] += 1
+            if poll_call_count[0] <= poll_returns_none_count:
+                return None
+            return returncode
+
+        mock_process.poll.side_effect = poll_side_effect
+
+        # Legacy wait mock for backward compatibility
+        if wait_side_effect:
+            mock_process.wait.side_effect = wait_side_effect
+        else:
+            mock_process.wait.return_value = returncode
 
     mock_process.kill = MagicMock()
 
@@ -148,6 +173,7 @@ def make_codex_json_output(text: str = "Mock response", thread_id: str = "test-t
 
     Returns:
         Multi-line string with Codex JSON stream messages.
+
     """
     lines = [
         json.dumps({"type": "thread.started", "thread_id": thread_id}),
@@ -172,6 +198,7 @@ def make_gemini_json_output(text: str = "Mock response", session_id: str = "test
 
     Returns:
         Multi-line string with Gemini JSON stream messages.
+
     """
     lines = [
         json.dumps({"type": "init", "session_id": session_id, "model": "gemini-2.5-flash"}),
@@ -206,11 +233,20 @@ def mock_popen_success():
 
 @pytest.fixture
 def mock_popen_timeout():
-    """Fixture that mocks Popen for timeout."""
-    with patch("bmad_assist.providers.claude.Popen") as mock:
-        mock.return_value = create_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["claude"], timeout=5)
-        )
+    """Fixture that mocks Popen for timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.claude.Popen") as mock,
+        patch("bmad_assist.providers.claude.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.claude.time.sleep"),
+    ):
+        mock.return_value = create_mock_process(never_finish=True)
         yield mock
 
 
@@ -245,6 +281,7 @@ def create_codex_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for Codex testing."""
     if stdout_content is None:
@@ -254,6 +291,7 @@ def create_codex_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -270,11 +308,20 @@ def mock_codex_popen_success():
 
 @pytest.fixture
 def mock_codex_popen_timeout():
-    """Fixture that mocks Popen for Codex timeout."""
-    with patch("bmad_assist.providers.codex.Popen") as mock:
-        mock.return_value = create_codex_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["codex"], timeout=5)
-        )
+    """Fixture that mocks Popen for Codex timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.codex.Popen") as mock,
+        patch("bmad_assist.providers.codex.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.codex.time.sleep"),
+    ):
+        mock.return_value = create_codex_mock_process(never_finish=True)
         yield mock
 
 
@@ -309,6 +356,7 @@ def create_gemini_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for Gemini testing."""
     if stdout_content is None:
@@ -318,6 +366,7 @@ def create_gemini_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -334,11 +383,20 @@ def mock_gemini_popen_success():
 
 @pytest.fixture
 def mock_gemini_popen_timeout():
-    """Fixture that mocks Popen for Gemini timeout."""
-    with patch("bmad_assist.providers.gemini.Popen") as mock:
-        mock.return_value = create_gemini_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["gemini"], timeout=5)
-        )
+    """Fixture that mocks Popen for Gemini timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.gemini.Popen") as mock,
+        patch("bmad_assist.providers.gemini.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.gemini.time.sleep"),
+    ):
+        mock.return_value = create_gemini_mock_process(never_finish=True)
         yield mock
 
 
@@ -379,6 +437,7 @@ def make_opencode_json_output(
 
     Returns:
         Multi-line string with OpenCode JSON stream messages.
+
     """
     lines = [
         json.dumps({"type": "step_start", "sessionID": session_id, "part": {"type": "step-start"}}),
@@ -399,6 +458,7 @@ def create_opencode_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for OpenCode testing."""
     if stdout_content is None:
@@ -408,6 +468,7 @@ def create_opencode_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -424,11 +485,20 @@ def mock_opencode_popen_success():
 
 @pytest.fixture
 def mock_opencode_popen_timeout():
-    """Fixture that mocks Popen for OpenCode timeout."""
-    with patch("bmad_assist.providers.opencode.Popen") as mock:
-        mock.return_value = create_opencode_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["opencode"], timeout=5)
-        )
+    """Fixture that mocks Popen for OpenCode timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.opencode.Popen") as mock,
+        patch("bmad_assist.providers.opencode.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.opencode.time.sleep"),
+    ):
+        mock.return_value = create_opencode_mock_process(never_finish=True)
         yield mock
 
 
@@ -469,6 +539,7 @@ def make_amp_json_output(
 
     Returns:
         Multi-line string with Amp JSON stream messages.
+
     """
     lines = [
         json.dumps({"type": "system", "subtype": "init", "session_id": session_id, "tools": []}),
@@ -501,6 +572,7 @@ def create_amp_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for Amp testing."""
     if stdout_content is None:
@@ -510,6 +582,7 @@ def create_amp_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -526,11 +599,20 @@ def mock_amp_popen_success():
 
 @pytest.fixture
 def mock_amp_popen_timeout():
-    """Fixture that mocks Popen for Amp timeout."""
-    with patch("bmad_assist.providers.amp.Popen") as mock:
-        mock.return_value = create_amp_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["amp"], timeout=5)
-        )
+    """Fixture that mocks Popen for Amp timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.amp.Popen") as mock,
+        patch("bmad_assist.providers.amp.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.amp.time.sleep"),
+    ):
+        mock.return_value = create_amp_mock_process(never_finish=True)
         yield mock
 
 
@@ -567,6 +649,7 @@ def make_copilot_output(text: str = "Mock response") -> str:
 
     Returns:
         Plain text output with trailing newline.
+
     """
     return text + "\n"
 
@@ -577,6 +660,7 @@ def create_copilot_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for Copilot testing.
 
@@ -588,9 +672,11 @@ def create_copilot_mock_process(
         returncode: Exit code for wait().
         wait_side_effect: Exception to raise from wait() (e.g., TimeoutExpired).
         response_text: Text to use if stdout_content is None.
+        never_finish: If True, poll() always returns None.
 
     Returns:
         MagicMock configured to behave like a Popen process.
+
     """
     if stdout_content is None:
         stdout_content = make_copilot_output(response_text)
@@ -599,6 +685,7 @@ def create_copilot_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -615,11 +702,20 @@ def mock_copilot_popen_success():
 
 @pytest.fixture
 def mock_copilot_popen_timeout():
-    """Fixture that mocks Popen for Copilot timeout."""
-    with patch("bmad_assist.providers.copilot.Popen") as mock:
-        mock.return_value = create_copilot_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["copilot"], timeout=5)
-        )
+    """Fixture that mocks Popen for Copilot timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.copilot.Popen") as mock,
+        patch("bmad_assist.providers.copilot.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.copilot.time.sleep"),
+    ):
+        mock.return_value = create_copilot_mock_process(never_finish=True)
         yield mock
 
 
@@ -656,6 +752,7 @@ def make_cursor_output(text: str = "Mock response") -> str:
 
     Returns:
         Plain text output with trailing newline.
+
     """
     return text + "\n"
 
@@ -666,6 +763,7 @@ def create_cursor_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for Cursor Agent testing.
 
@@ -677,9 +775,11 @@ def create_cursor_mock_process(
         returncode: Exit code for wait().
         wait_side_effect: Exception to raise from wait() (e.g., TimeoutExpired).
         response_text: Text to use if stdout_content is None.
+        never_finish: If True, poll() always returns None.
 
     Returns:
         MagicMock configured to behave like a Popen process.
+
     """
     if stdout_content is None:
         stdout_content = make_cursor_output(response_text)
@@ -688,6 +788,7 @@ def create_cursor_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -704,11 +805,20 @@ def mock_cursor_popen_success():
 
 @pytest.fixture
 def mock_cursor_popen_timeout():
-    """Fixture that mocks Popen for Cursor Agent timeout."""
-    with patch("bmad_assist.providers.cursor_agent.Popen") as mock:
-        mock.return_value = create_cursor_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["cursor-agent"], timeout=5)
-        )
+    """Fixture that mocks Popen for Cursor Agent timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.cursor_agent.Popen") as mock,
+        patch("bmad_assist.providers.cursor_agent.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.cursor_agent.time.sleep"),
+    ):
+        mock.return_value = create_cursor_mock_process(never_finish=True)
         yield mock
 
 
@@ -751,6 +861,7 @@ def make_kimi_json_output(
 
     Returns:
         Multi-line string with Kimi JSONL messages.
+
     """
     msg: dict = {"role": "assistant", "content": text}
     if reasoning_content:
@@ -768,6 +879,7 @@ def make_kimi_multi_message_output(messages: list[str]) -> str:
 
     Returns:
         Multi-line string with multiple Kimi JSONL messages.
+
     """
     lines = [json.dumps({"role": "assistant", "content": text}) for text in messages]
     return "\n".join(lines) + "\n"
@@ -779,6 +891,7 @@ def create_kimi_mock_process(
     returncode: int = 0,
     wait_side_effect: Exception | None = None,
     response_text: str = "Mock response",
+    never_finish: bool = False,
 ) -> MagicMock:
     """Create a mock Popen process for Kimi testing.
 
@@ -788,9 +901,11 @@ def create_kimi_mock_process(
         returncode: Exit code for wait().
         wait_side_effect: Exception to raise from wait() (e.g., TimeoutExpired).
         response_text: Text to use if stdout_content is None.
+        never_finish: If True, poll() always returns None.
 
     Returns:
         MagicMock configured to behave like a Popen process.
+
     """
     if stdout_content is None:
         stdout_content = make_kimi_json_output(response_text)
@@ -799,6 +914,7 @@ def create_kimi_mock_process(
         stderr_content=stderr_content,
         returncode=returncode,
         wait_side_effect=wait_side_effect,
+        never_finish=never_finish,
     )
 
 
@@ -815,11 +931,20 @@ def mock_kimi_popen_success():
 
 @pytest.fixture
 def mock_kimi_popen_timeout():
-    """Fixture that mocks Popen for Kimi timeout."""
-    with patch("bmad_assist.providers.kimi.Popen") as mock:
-        mock.return_value = create_kimi_mock_process(
-            wait_side_effect=TimeoutExpired(cmd=["kimi"], timeout=5)
-        )
+    """Fixture that mocks Popen for Kimi timeout with accelerated time."""
+    call_count = [0]
+
+    def mock_perf_counter():
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.kimi.Popen") as mock,
+        patch("bmad_assist.providers.kimi.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.kimi.time.sleep"),
+    ):
+        mock.return_value = create_kimi_mock_process(never_finish=True)
         yield mock
 
 
@@ -841,3 +966,40 @@ def mock_kimi_popen_not_found():
     with patch("bmad_assist.providers.kimi.Popen") as mock:
         mock.side_effect = FileNotFoundError("kimi")
         yield mock
+
+
+# =============================================================================
+# Time Acceleration for Timeout Tests
+# =============================================================================
+
+
+@pytest.fixture
+def accelerated_time():
+    """Fixture that accelerates time for instant timeout tests.
+
+    Patches time.perf_counter to return rapidly increasing values and
+    time.sleep to not actually sleep. This makes timeout tests complete
+    instantly instead of waiting for real timeouts.
+
+    Usage:
+        def test_timeout(accelerated_time, provider):
+            with patch("bmad_assist.providers.claude.Popen") as mock_popen:
+                mock_popen.return_value = create_mock_process(never_finish=True)
+                with pytest.raises(ProviderTimeoutError):
+                    provider.invoke("Hello", timeout=5)  # Returns instantly
+
+    """
+    call_count = [0]
+
+    def mock_perf_counter():
+        # Return rapidly increasing values: 0, 10, 20, 30...
+        # This ensures any timeout (e.g., 5s) is exceeded after 1 iteration
+        result = call_count[0] * 10
+        call_count[0] += 1
+        return result
+
+    with (
+        patch("bmad_assist.providers.claude.time.perf_counter", side_effect=mock_perf_counter),
+        patch("bmad_assist.providers.claude.time.sleep"),
+    ):
+        yield

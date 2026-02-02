@@ -1,40 +1,55 @@
 /**
  * Terminal component for output display
- * Handles terminal output, tabs, filtering, auto-scroll, and font size
+ * Uses xterm.js for full terminal emulation with ANSI color support
  */
 
 window.terminalComponent = function() {
     return {
         // State
         output: [],
-        activeTab: 'All',
         autoScroll: true,
-        terminalStatus: 'idle',  // 'idle' | 'running' | 'complete' | 'stopped'
-        providerCounts: {
-            claude: 0,
-            opus: 0,
-            gemini: 0,
-            glm: 0
-        },
-        _scrollTimeout: null,
-        _validatorResetTimeout: null,  // Story 22.11: Cancelable progress reset
+        terminalStatus: 'idle',
 
-        // Story 22.11 Task 7: Validator progress tracking
+        _scrollTimeout: null,
+        _validatorResetTimeout: null,
+
+        // xterm.js instances
+        _xterm: null,
+        _fitAddon: null,
+        _resizeObserver: null,
+
+        // Output batching for performance
+        _xtermWriteQueue: [],
+        _xtermFlushTimer: null,
+        _XTERM_FLUSH_INTERVAL: 50,
+
+        // Validator progress tracking
         validatorProgress: {
             total: 0,
             completed: 0,
             failed: 0,
-            validators: {}  // { validator_id: { status, duration_ms } }
+            validators: {}
         },
 
-        // Terminal font size (px) - adjustable with Ctrl+scroll or Ctrl+/-
+        // Terminal font size
         terminalFontSize: 13,
         terminalFontSizeMin: 9,
         terminalFontSizeMax: 24,
 
-        // Initialize terminal (called from main init)
+        // ANSI color codes for providers
+        _providerColors: {
+            opus: '\x1b[38;5;208m',
+            gemini: '\x1b[38;5;39m',
+            glm: '\x1b[38;5;40m',
+            claude: '\x1b[38;5;141m',
+            dashboard: '\x1b[38;5;245m',
+            workflow: '\x1b[38;5;250m',
+            bmad: '\x1b[38;5;250m'
+        },
+        _ANSI_RESET: '\x1b[0m',
+        _ANSI_DIM: '\x1b[2m',
+
         initTerminal() {
-            // Load persisted terminal font size
             const savedFontSize = localStorage.getItem('bmad-terminal-font-size');
             if (savedFontSize) {
                 const size = parseInt(savedFontSize, 10);
@@ -42,163 +57,147 @@ window.terminalComponent = function() {
                     this.terminalFontSize = size;
                 }
             }
+            this.$nextTick(() => this._initXterm());
         },
 
-        // Add output line
+        _initXterm() {
+            const container = this.$refs.xtermContainer;
+            if (!container || this._xterm) return;
+
+            this._xterm = new Terminal({
+                theme: {
+                    background: '#0a0a0f',
+                    foreground: '#e4e4e7',
+                    cursor: '#a855f7',
+                    cursorAccent: '#0a0a0f',
+                    selection: 'rgba(168, 85, 247, 0.3)',
+                    black: '#18181b',
+                    red: '#f87171',
+                    green: '#4ade80',
+                    yellow: '#facc15',
+                    blue: '#60a5fa',
+                    magenta: '#c084fc',
+                    cyan: '#22d3ee',
+                    white: '#e4e4e7',
+                    brightBlack: '#52525b',
+                    brightRed: '#fca5a5',
+                    brightGreen: '#86efac',
+                    brightYellow: '#fde047',
+                    brightBlue: '#93c5fd',
+                    brightMagenta: '#d8b4fe',
+                    brightCyan: '#67e8f9',
+                    brightWhite: '#fafafa'
+                },
+                fontSize: this.terminalFontSize,
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+                scrollback: 10000,
+                cursorBlink: false,
+                cursorStyle: 'bar',
+                disableStdin: true,
+                convertEol: true,
+                allowProposedApi: true
+            });
+
+            this._fitAddon = new FitAddon.FitAddon();
+            this._xterm.loadAddon(this._fitAddon);
+            this._xterm.loadAddon(new WebLinksAddon.WebLinksAddon());
+            this._xterm.open(container);
+            this._fitAddon.fit();
+
+            this._resizeObserver = new ResizeObserver(() => {
+                if (this._fitAddon) this._fitAddon.fit();
+            });
+            this._resizeObserver.observe(container);
+
+            this._xterm.writeln('\x1b[38;5;141m' + '='.repeat(60) + this._ANSI_RESET);
+            this._xterm.writeln('\x1b[38;5;141m  bmad-assist dashboard' + this._ANSI_RESET);
+            this._xterm.writeln('\x1b[38;5;245m  Terminal ready. Click Start to begin loop.' + this._ANSI_RESET);
+            this._xterm.writeln('\x1b[38;5;141m' + '='.repeat(60) + this._ANSI_RESET);
+            this._xterm.writeln('');
+        },
+
         addOutput(data) {
             const time = new Date(data.timestamp * 1000).toLocaleTimeString('en-US', { hour12: false });
-            this.output.push({
+            const line = {
                 time,
                 provider: data.provider,
                 text: data.line
-            });
+            };
+            this.output.push(line);
 
-            // Update provider counts (using lowercase keys to match SSE provider values)
-            if (data.provider && this.providerCounts[data.provider] !== undefined) {
-                this.providerCounts[data.provider]++;
-            }
-
-            // Limit output buffer and recalculate provider counts after trim
             if (this.output.length > 1000) {
                 this.output = this.output.slice(-500);
-                // Recalculate provider counts from remaining buffer
-                this.recalculateProviderCounts();
             }
 
-            // Check for loop end message from dashboard
-            if (data.provider === 'dashboard' && data.line.includes('🏁 Loop ended')) {
+            if (data.provider === 'dashboard' && data.line.includes('Loop ended')) {
                 this.loopRunning = false;
                 this.pauseRequested = false;
             }
 
-            // Auto-scroll
-            if (this.autoScroll) {
-                this.$nextTick(() => this.scrollToBottom());
-            }
+            this._queueXtermWrite(line);
         },
 
-        // Get filtered output based on active tab
-        get filteredOutput() {
-            if (this.activeTab === 'All') {
-                return this.output;
-            }
-            const provider = this.activeTab.toLowerCase();
-            return this.output.filter(line => line.provider === provider);
-        },
+        _queueXtermWrite(line) {
+            if (!this._xterm) return;
 
-        // Get count for tab
-        getTabCount(tab) {
-            if (tab === 'All') return this.output.length;
-            // Tab names are PascalCase, providerCounts keys are lowercase
-            return this.providerCounts[tab.toLowerCase()] || 0;
-        },
-
-        // Recalculate provider counts from buffer
-        recalculateProviderCounts() {
-            // Reset all counts
-            for (const key of Object.keys(this.providerCounts)) {
-                this.providerCounts[key] = 0;
-            }
-            // Recount from remaining buffer
-            for (const line of this.output) {
-                if (line.provider && this.providerCounts[line.provider] !== undefined) {
-                    this.providerCounts[line.provider]++;
-                }
-            }
-        },
-
-        // Format line with clickable file paths
-        formatLine(text) {
-            // Escape HTML entities first to prevent XSS
-            const escaped = text
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
-
-            // Convert file paths to clickable links (uses data-path for event delegation)
-            // Supports: .py, .md, .yaml, .yml, .json, .toml, .ts, .js, .html, .css
-            // Supports absolute paths starting with / or ~/
-            // Excludes URL paths by requiring path to start at word boundary or start of string
-            // and not be preceded by :// (protocol separator)
-            return escaped.replace(
-                /(?<![:/])((?:\/|~\/|(?<=\s))[\w\-\.\/]+\.(py|md|yaml|yml|json|toml|ts|js|html|css))(?=[\s,;:)"']|$)/g,
-                '<a href="#" class="file-link text-bp-accent hover:underline" data-path="$1">$1</a>'
-            );
-        },
-
-        // Handle click on terminal (event delegation for file links)
-        handleTerminalClick(event) {
-            // Event delegation for file links in terminal output
-            const link = event.target.closest('.file-link');
-            if (link) {
-                event.preventDefault();
-                const path = link.dataset.path;
-                if (path) {
-                    this.openFile(path);
-                }
-            }
-        },
-
-        // Open file (copy path to clipboard)
-        openFile(path) {
-            // Copy path to clipboard and show toast notification
-            // Guard against non-secure contexts where clipboard API is unavailable
-            if (!navigator.clipboard) {
-                console.error('Clipboard API unavailable (requires secure context)');
+            // Log level filter (frontend filtering for instant response)
+            // Dashboard messages always shown, workflow output filtered
+            if (line.provider === 'workflow' && this.shouldShowLogLine && !this.shouldShowLogLine(line.text)) {
                 return;
             }
-            navigator.clipboard.writeText(path)
-                .then(() => {
-                    this.showToast(`Path copied: ${path}`);
-                })
-                .catch(err => {
-                    console.error('Clipboard write failed:', err);
-                });
-        },
 
-        // Handle scroll event (detect manual scroll to disable auto-scroll)
-        handleScroll(event) {
-            // Debounce scroll handler (100ms)
-            if (this._scrollTimeout) {
-                clearTimeout(this._scrollTimeout);
+            const formatted = this._formatXtermLine(line);
+            this._xtermWriteQueue.push(formatted);
+
+            if (!this._xtermFlushTimer) {
+                this._xtermFlushTimer = setTimeout(() => this._flushXtermQueue(), this._XTERM_FLUSH_INTERVAL);
             }
-            this._scrollTimeout = setTimeout(() => {
-                const el = event.target;
-                const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 50;
-                this.autoScroll = atBottom;
-            }, 100);
         },
 
-        // Scroll to bottom of terminal
+        _flushXtermQueue() {
+            if (!this._xterm || this._xtermWriteQueue.length === 0) {
+                this._xtermFlushTimer = null;
+                return;
+            }
+            const batch = this._xtermWriteQueue.join('\r\n') + '\r\n';
+            this._xterm.write(batch);
+            this._xtermWriteQueue = [];
+            this._xtermFlushTimer = null;
+            if (this.autoScroll) this._xterm.scrollToBottom();
+        },
+
+        _formatXtermLine(line) {
+            const provider = line.provider || 'bmad';
+            const providerColor = this._providerColors[provider] || this._providerColors.bmad;
+            return `${this._ANSI_DIM}[${line.time}]${this._ANSI_RESET} ${providerColor}[${provider}]${this._ANSI_RESET} ${line.text}`;
+        },
+
         scrollToBottom() {
-            const terminal = this.$refs.terminal;
-            if (terminal) {
-                terminal.scrollTop = terminal.scrollHeight;
+            if (this._xterm) {
+                this._xterm.scrollToBottom();
                 this.autoScroll = true;
             }
         },
 
-        // Adjust terminal font size
         adjustTerminalFontSize(delta) {
             const newSize = this.terminalFontSize + delta;
             if (newSize >= this.terminalFontSizeMin && newSize <= this.terminalFontSizeMax) {
                 this.terminalFontSize = newSize;
                 localStorage.setItem('bmad-terminal-font-size', newSize);
+                if (this._xterm) {
+                    this._xterm.options.fontSize = newSize;
+                    if (this._fitAddon) this._fitAddon.fit();
+                }
             }
         },
 
-        // Handle mouse wheel with Ctrl key for font size
         handleTerminalWheel(e) {
             if (e.ctrlKey) {
                 e.preventDefault();
-                // Scroll up = zoom in, scroll down = zoom out
                 this.adjustTerminalFontSize(e.deltaY < 0 ? 1 : -1);
             }
         },
 
-        // Handle keyboard shortcuts for font size
         handleTerminalKeydown(e) {
             if (e.ctrlKey && (e.key === '+' || e.key === '=' || e.key === 'NumpadAdd')) {
                 e.preventDefault();
@@ -208,93 +207,81 @@ window.terminalComponent = function() {
                 this.adjustTerminalFontSize(-1);
             } else if (e.ctrlKey && e.key === '0') {
                 e.preventDefault();
-                this.terminalFontSize = 13; // Reset to default
+                this.terminalFontSize = 13;
                 localStorage.setItem('bmad-terminal-font-size', 13);
+                if (this._xterm) {
+                    this._xterm.options.fontSize = 13;
+                    if (this._fitAddon) this._fitAddon.fit();
+                }
             }
         },
 
-        // Get provider color class
-        getProviderColor(provider) {
-            const colors = {
-                opus: 'provider-opus',
-                gemini: 'provider-gemini',
-                glm: 'provider-glm',
-                claude: 'provider-claude'
-            };
-            return colors[provider] || 'provider-bmad';
+        clearTerminal() {
+            if (this._xterm) this._xterm.clear();
+            this.output = [];
         },
 
-        // Story 22.11 Task 7: Handle validator progress event
         _handleValidatorProgress(data) {
             const { validator_id, status, duration_ms } = data.data || {};
             if (!validator_id) return;
-
-            // Cancel pending reset if new validation is starting
             if (this._validatorResetTimeout) {
                 clearTimeout(this._validatorResetTimeout);
                 this._validatorResetTimeout = null;
             }
-
-            // Track validator completion
             this.validatorProgress.validators[validator_id] = { status, duration_ms };
-
-            // Update counts
             if (status === 'completed') {
                 this.validatorProgress.completed++;
             } else if (status === 'timeout' || status === 'failed') {
                 this.validatorProgress.failed++;
             }
-
-            // Update total based on unique validators seen
             this.validatorProgress.total = Object.keys(this.validatorProgress.validators).length;
-
             console.debug(`Validator ${validator_id}: ${status}`,
                 `(${this.validatorProgress.completed}/${this.validatorProgress.total})`);
         },
 
-        // Story 22.11 Task 7: Handle phase complete event
         _handlePhaseComplete(data) {
             const { phase_name, success, validator_count, failed_count } = data.data || {};
-
-            // Cancel any pending reset to prevent race condition
             if (this._validatorResetTimeout) {
                 clearTimeout(this._validatorResetTimeout);
                 this._validatorResetTimeout = null;
             }
-
-            // Update final counts from authoritative source
             this.validatorProgress.total = validator_count || this.validatorProgress.total;
             this.validatorProgress.failed = failed_count || this.validatorProgress.failed;
             this.validatorProgress.completed = validator_count - failed_count;
-
             console.log(`Phase ${phase_name} complete:`,
                 `${this.validatorProgress.completed}/${this.validatorProgress.total} succeeded`,
                 success ? '(SUCCESS)' : '(FAILED)');
-
-            // Reset progress after a delay to allow UI to show final state
-            // Use cancelable timeout to prevent race condition with new validation
             this._validatorResetTimeout = setTimeout(() => {
-                this.validatorProgress = {
-                    total: 0,
-                    completed: 0,
-                    failed: 0,
-                    validators: {}
-                };
+                this.validatorProgress = { total: 0, completed: 0, failed: 0, validators: {} };
                 this._validatorResetTimeout = null;
             }, 3000);
         },
 
-        // Story 22.11 Task 7: Get validator progress percentage
         get validatorProgressPercent() {
             if (this.validatorProgress.total === 0) return 0;
             const done = this.validatorProgress.completed + this.validatorProgress.failed;
             return Math.round((done / this.validatorProgress.total) * 100);
         },
 
-        // Story 22.11 Task 7: Check if validation is in progress
         get isValidating() {
             return this.validatorProgress.total > 0 &&
                 (this.validatorProgress.completed + this.validatorProgress.failed) < this.validatorProgress.total;
+        },
+
+        _destroyXterm() {
+            if (this._xtermFlushTimer) {
+                clearTimeout(this._xtermFlushTimer);
+                this._xtermFlushTimer = null;
+            }
+            if (this._resizeObserver) {
+                this._resizeObserver.disconnect();
+                this._resizeObserver = null;
+            }
+            if (this._xterm) {
+                this._xterm.dispose();
+                this._xterm = null;
+            }
+            this._fitAddon = null;
         }
     };
 };

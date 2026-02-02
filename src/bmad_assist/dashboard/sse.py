@@ -27,6 +27,7 @@ class EventType(Enum):
     OUTPUT = "output"  # bmad-assist stdout/stderr
     STATUS = "status"  # General status update
     HEARTBEAT = "heartbeat"  # Keep-alive ping
+    MODEL_STARTED = "model_started"  # New model invocation tab
 
 
 @dataclass
@@ -171,12 +172,18 @@ class SSEBroadcaster:
 
             return len(self._queues)
 
-    async def broadcast_output(self, line: str, provider: str | None = None) -> int:
+    async def broadcast_output(
+        self,
+        line: str,
+        provider: str | None = None,
+        model_tab_id: str | None = None,
+    ) -> int:
         """Broadcast bmad-assist output line.
 
         Args:
             line: Output line text.
             provider: Provider name (opus, gemini, etc.) or None.
+            model_tab_id: Dynamic model tab ID (e.g., "opus-1", "glm-4.7-2").
 
         Returns:
             Number of clients message was sent to.
@@ -187,9 +194,41 @@ class SSEBroadcaster:
             {
                 "line": line,
                 "provider": provider,
+                "model_tab_id": model_tab_id,
                 "timestamp": time.time(),
             },
         )
+
+    async def broadcast_model_started(
+        self,
+        model: str,
+        tab_id: str,
+        role: str | None = None,
+        provider: str | None = None,
+    ) -> int:
+        """Broadcast model_started event for dynamic tab creation.
+
+        Args:
+            model: Model identifier (e.g., "opus", "glm-4.7").
+            tab_id: Unique tab ID (e.g., "opus-1", "glm-4.7-2").
+            role: Optional role descriptor (e.g., "master", "helper").
+            provider: Optional provider name.
+
+        Returns:
+            Number of clients message was sent to.
+
+        """
+        data: dict[str, Any] = {
+            "model": model,
+            "tab_id": tab_id,
+            "timestamp": time.time(),
+        }
+        if role:
+            data["role"] = role
+        if provider:
+            data["provider"] = provider
+
+        return await self.broadcast(EventType.MODEL_STARTED, data)
 
     async def broadcast_event(self, event_name: str, data: dict[str, Any]) -> int:
         """Broadcast a custom event to all connected clients.

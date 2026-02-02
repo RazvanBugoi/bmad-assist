@@ -14,12 +14,18 @@ window.loopControlComponent = function() {
         // Version info
         version: null,
 
+        // Log level control (hybrid: backend IPC + frontend filtering)
+        logLevel: 'info',  // Current level: debug, info, warning
+        logLevelDropdownOpen: false,  // Dropdown state (moved from nested x-data to fix reactivity)
+        _logLevelPriority: { debug: 0, info: 1, warning: 2 },
+
         /**
          * Initialize loop control (called from main init)
          */
         initLoopControl() {
             this.checkLoopStatus();
             this.fetchVersion();
+            this.fetchLogLevel();
             // Poll loop status every 2 seconds to detect external runs
             // (CLI, context menu actions, etc.)
             this._loopStatusInterval = setInterval(() => {
@@ -149,9 +155,141 @@ window.loopControlComponent = function() {
                 } else if (data.status === 'running') {
                     this.isPaused = false;
                 }
+                // Fix by Rafael Lopes Pini: Populate queue.current when running
+                if (data.running) {
+                    await this.fetchCurrentPosition();
+                } else {
+                    this.queue.current = null;
+                }
             } catch (error) {
                 console.error('Failed to check loop status:', error);
             }
+        },
+
+        /**
+         * Fetch current execution position from state.yaml
+         * Fix by Rafael Lopes Pini: Populate queue.current to show current task in header
+         */
+        async fetchCurrentPosition() {
+            try {
+                const response = await fetch('/api/state');
+                const data = await response.json();
+                if (data.has_position && data.current_phase) {
+                    const storyParts = data.current_story?.split('.') || [];
+                    const epicNum = storyParts[0] || data.current_epic;
+                    const storyNum = storyParts[1] || '?';
+
+                    const phaseDisplayNames = {
+                        'create_story': 'Create Story',
+                        'validate_story': 'Validate Story',
+                        'validate_story_synthesis': 'Validate Synthesis',
+                        'dev_story': 'Develop Story',
+                        'code_review': 'Code Review',
+                        'code_review_synthesis': 'Review Synthesis',
+                        'retrospective': 'Retrospective',
+                        'qa_plan_generate': 'QA Plan',
+                        'qa_plan_execute': 'QA Execute'
+                    };
+                    const workflow = phaseDisplayNames[data.current_phase] || data.current_phase;
+
+                    // Use phase_started_at from API (read from run log)
+                    const phaseStartedAt = data.phase_started_at || this.queue.current?.phase_started_at;
+
+                    this.queue.current = {
+                        workflow: workflow,
+                        epic_num: epicNum,
+                        story_num: storyNum,
+                        phase_started_at: phaseStartedAt
+                    };
+                } else {
+                    this.queue.current = null;
+                }
+            } catch (error) {
+                console.error('Failed to fetch current position:', error);
+            }
+        },
+
+        /**
+         * Fetch current log level from server
+         */
+        async fetchLogLevel() {
+            try {
+                const res = await fetch('/api/loop/log-level');
+                const data = await res.json();
+                if (data.level) {
+                    this.logLevel = data.level;
+                }
+            } catch (err) {
+                console.debug('Failed to fetch log level:', err);
+            }
+        },
+
+        /**
+         * Set log level (calls backend API + updates frontend filter)
+         * @param {string} level - Log level: debug, info, warning
+         */
+        async setLogLevel(level) {
+            const oldLevel = this.logLevel;
+            this.logLevel = level;  // Immediate UI update
+
+            try {
+                const res = await fetch('/api/loop/log-level', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    this.logLevel = oldLevel;  // Revert on error
+                    this.showToast(`Failed: ${data.error}`);
+                }
+                // New lines will be filtered by shouldShowLogLine() in terminal.js
+            } catch (err) {
+                this.logLevel = oldLevel;
+                console.error('Failed to set log level:', err);
+                this.showToast('Failed to set log level');
+            }
+        },
+
+        /**
+         * Check if a log line should be shown based on current log level filter
+         * @param {string} text - Log line text
+         * @returns {boolean} - True if should be shown
+         */
+        shouldShowLogLine(text) {
+            // Phase banners are always shown (progress markers, not logs)
+            // Match phase names directly (ANSI codes from Rich break bracket patterns)
+            // Matches: CREATE STORY, VALIDATE STORY, DEV STORY, CODE REVIEW, etc.
+            if (/(CREATE STORY|VALIDATE STORY|VALIDATE SYNTHESIS|DEV STORY|CODE REVIEW|REVIEW SYNTHESIS|RETROSPECTIVE)/.test(text)) {
+                return true;
+            }
+
+            // Strip ANSI codes for pattern matching (colors break prefix detection)
+            const stripped = text.replace(/\x1b\[[0-9;]*m/g, '');
+
+            // Match log level markers at LINE START only (with optional timestamp prefix)
+            // Patterns: "2026-01-15 10:30:00 [INFO]", "[DEBUG]", "INFO:", "WARNING:" etc.
+            // Must be at start of line (after stripping ANSI) to avoid matching content
+            const patterns = {
+                debug: /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[.,]?\d*\s+)?\[?DEBUG\]?:?\s/i,
+                info: /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[.,]?\d*\s+)?\[?INFO\]?:?\s/i,
+                warning: /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[.,]?\d*\s+)?\[?(WARNING|WARN)\]?:?\s/i
+            };
+
+            // Determine line's log level - only filter lines with EXPLICIT level markers at START
+            // Lines without markers (like LLM output) are always shown
+            let lineLevel = null;
+            if (patterns.debug.test(stripped)) lineLevel = 'debug';
+            else if (patterns.warning.test(stripped)) lineLevel = 'warning';
+            else if (patterns.info.test(stripped)) lineLevel = 'info';
+
+            // Lines without explicit level marker are always shown (LLM output, etc.)
+            if (lineLevel === null) {
+                return true;
+            }
+
+            // Show if line level >= current filter level
+            return this._logLevelPriority[lineLevel] >= this._logLevelPriority[this.logLevel];
         },
 
         /**

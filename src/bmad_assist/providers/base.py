@@ -257,6 +257,45 @@ def format_tag(tag: str, color_index: int | None) -> str:
     return f"[{tag}]"
 
 
+_last_log_level_check: float = 0.0
+_LOG_LEVEL_CHECK_INTERVAL: float = 1.0  # Check control file at most once per second
+
+
+def should_print_progress() -> bool:
+    """Check if workflow progress should be printed (INFO+ level).
+
+    Dynamically checks the control file for log level changes (rate-limited
+    to once per second) so dashboard log level changes take effect immediately.
+    """
+    import time
+
+    global _last_log_level_check
+
+    now = time.monotonic()
+    if now - _last_log_level_check >= _LOG_LEVEL_CHECK_INTERVAL:
+        _last_log_level_check = now
+        _check_log_level_control_file()
+
+    return logger.isEnabledFor(logging.INFO)
+
+
+def _check_log_level_control_file() -> None:
+    """Check control file and update logger level if changed."""
+    try:
+        from bmad_assist.core.paths import get_paths
+
+        paths = get_paths()
+        control_file = paths.project_root / ".bmad-assist" / "runtime" / "log-level"
+        if control_file.exists():
+            level = control_file.read_text().strip().upper()
+            if level in ("DEBUG", "INFO", "WARNING"):
+                from bmad_assist.cli_utils import update_log_level
+
+                update_log_level(level)
+    except Exception:
+        pass  # Silent fail - paths not initialized or file missing
+
+
 def write_progress(line: str) -> None:
     r"""Write a progress line to stdout with locking.
 
@@ -668,6 +707,7 @@ class BaseProvider(ABC):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute LLM provider with the given prompt.
 
@@ -698,6 +738,11 @@ class BaseProvider(ABC):
             thinking: Enable extended thinking mode for supported providers.
                 If None, auto-detected from model name. Currently only kimi
                 provider supports this; other providers should ignore.
+            cancel_token: Optional threading.Event for cancellation.
+                When set, implementations should check is_set() periodically
+                and terminate gracefully if True. For subprocess providers,
+                this triggers process termination. For SDK providers, this
+                should cancel pending requests. Default: None (no cancellation).
 
         Returns:
             ProviderResult containing stdout, stderr, exit code, and timing.
@@ -764,3 +809,14 @@ class BaseProvider(ABC):
 
         """
         ...
+
+    def cancel(self) -> None:  # noqa: B027
+        """Cancel any running operation.
+
+        Called by LoopController cleanup hooks to terminate provider execution
+        mid-phase. Default implementation is no-op. Subprocess-based providers
+        should override to terminate processes.
+
+        Thread-safe: Can be called from any thread while invoke() runs.
+        """
+        # Default no-op; override in subprocess providers

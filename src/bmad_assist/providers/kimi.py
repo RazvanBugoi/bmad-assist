@@ -52,6 +52,7 @@ from bmad_assist.providers.base import (
     extract_tool_details,
     format_tag,
     resolve_settings_file,
+    should_print_progress,
     validate_settings_file,
     write_progress,
 )
@@ -445,6 +446,7 @@ class KimiProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute kimi-cli with the given prompt using JSON streaming.
 
@@ -594,6 +596,7 @@ class KimiProvider(BaseProvider):
                     errors="replace",
                     cwd=cwd,
                     env=env,
+                    start_new_session=True,  # Own process group for safe termination
                 )
 
                 # Write prompt to stdin and close it
@@ -601,14 +604,10 @@ class KimiProvider(BaseProvider):
                     process.stdin.write(final_prompt)
                     process.stdin.close()
 
-                # Print output only in verbose/debug mode
-                print_output = logger.isEnabledFor(logging.DEBUG)
-
                 def process_json_stream(
                     stream: IO[str],
                     text_parts: list[str],
                     raw_lines: list[str],
-                    print_progress: bool,
                     json_logger: DebugJsonLogger,
                     color_idx: int | None,
                 ) -> None:
@@ -636,7 +635,7 @@ class KimiProvider(BaseProvider):
 
                                 if content:
                                     text_parts.append(content)
-                                    if print_progress:
+                                    if should_print_progress():
                                         preview = content[:200]
                                         if len(content) > 200:
                                             preview += "..."
@@ -646,7 +645,7 @@ class KimiProvider(BaseProvider):
                                 # Log tool calls if present
                                 tool_calls = msg.get("tool_calls", [])
                                 for tc in tool_calls:
-                                    if print_progress and isinstance(tc, dict):
+                                    if should_print_progress() and isinstance(tc, dict):
                                         func = tc.get("function", {})
                                         tool_name = func.get("name", "?")
                                         try:
@@ -665,7 +664,7 @@ class KimiProvider(BaseProvider):
                                 pass
 
                         except json.JSONDecodeError:
-                            if print_progress:
+                            if should_print_progress():
                                 tag = format_tag("RAW", color_idx)
                                 write_progress(f"{tag} {stripped}")
 
@@ -674,13 +673,12 @@ class KimiProvider(BaseProvider):
                 def read_stderr(
                     stream: IO[str],
                     chunks: list[str],
-                    print_lines: bool,
                     color_idx: int | None,
                 ) -> None:
                     """Read stderr stream."""
                     for line in iter(stream.readline, ""):
                         chunks.append(line)
-                        if print_lines:
+                        if should_print_progress():
                             stripped = line.rstrip()
                             tag = format_tag("ERR", color_idx)
                             write_progress(f"{tag} {stripped}")
@@ -693,19 +691,18 @@ class KimiProvider(BaseProvider):
                         process.stdout,
                         response_text_parts,
                         raw_stdout_lines,
-                        print_output,
                         debug_json_logger,
                         color_index,
                     ),
                 )
                 stderr_thread = threading.Thread(
                     target=read_stderr,
-                    args=(process.stderr, stderr_chunks, print_output, color_index),
+                    args=(process.stderr, stderr_chunks, color_index),
                 )
                 stdout_thread.start()
                 stderr_thread.start()
 
-                if print_output:
+                if should_print_progress():
                     shown_model = display_model or effective_model
                     tag = format_tag("START", color_index)
                     write_progress(f"{tag} Invoking Kimi CLI (model={shown_model})...")

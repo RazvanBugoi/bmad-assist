@@ -41,6 +41,7 @@ from bmad_assist.providers.base import (
     ExitStatus,
     ProviderResult,
     format_tag,
+    should_print_progress,
     validate_settings_file,
     write_progress,
 )
@@ -194,6 +195,7 @@ class CodexProvider(BaseProvider):
         color_index: int | None = None,
         display_model: str | None = None,
         thinking: bool | None = None,
+        cancel_token: threading.Event | None = None,
     ) -> ProviderResult:
         """Execute Codex CLI with the given prompt using JSON streaming.
 
@@ -323,16 +325,13 @@ class CodexProvider(BaseProvider):
                 encoding="utf-8",
                 errors="replace",
                 cwd=cwd,  # Use target project directory, not bmad-assist cwd
+                start_new_session=True,  # Own process group for safe termination
             )
-
-            # Print output only in verbose/debug mode
-            print_output = logger.isEnabledFor(logging.DEBUG)
 
             def process_json_stream(
                 stream: Any,
                 text_parts: list[str],
                 raw_lines: list[str],
-                print_progress: bool,
                 json_logger: DebugJsonLogger,
                 color_idx: int | None,
             ) -> None:
@@ -353,7 +352,7 @@ class CodexProvider(BaseProvider):
 
                         if msg_type == "thread.started":
                             thread_id = msg.get("thread_id", "?")
-                            if print_progress:
+                            if should_print_progress():
                                 tag = format_tag("INIT", color_idx)
                                 write_progress(f"{tag} Thread: {thread_id}")
 
@@ -364,20 +363,20 @@ class CodexProvider(BaseProvider):
                                 text = item.get("text", "")
                                 if text:
                                     text_parts.append(text)
-                                    if print_progress:
+                                    if should_print_progress():
                                         preview = text[:200]
                                         if len(text) > 200:
                                             preview += "..."
                                         tag = format_tag("MESSAGE", color_idx)
                                         write_progress(f"{tag} {preview}")
                             elif item_type == "command_execution":
-                                if print_progress:
+                                if should_print_progress():
                                     cmd = item.get("command", "?")
                                     tag = format_tag("CMD", color_idx)
                                     write_progress(f"{tag} {cmd}")
 
                         elif msg_type == "turn.completed":
-                            if print_progress:
+                            if should_print_progress():
                                 usage = msg.get("usage", {})
                                 input_tokens = usage.get("input_tokens", 0)
                                 output_tokens = usage.get("output_tokens", 0)
@@ -385,13 +384,13 @@ class CodexProvider(BaseProvider):
                                 write_progress(f"{tag} in={input_tokens} out={output_tokens}")
 
                         elif msg_type == "error":
-                            if print_progress:
+                            if should_print_progress():
                                 error_msg = msg.get("message", str(msg))
                                 tag = format_tag("ERROR", color_idx)
                                 write_progress(f"{tag} {error_msg}")
 
                     except json.JSONDecodeError:
-                        if print_progress:
+                        if should_print_progress():
                             tag = format_tag("RAW", color_idx)
                             write_progress(f"{tag} {stripped}")
 
@@ -400,13 +399,12 @@ class CodexProvider(BaseProvider):
             def read_stderr(
                 stream: Any,
                 chunks: list[str],
-                print_lines: bool,
                 color_idx: int | None,
             ) -> None:
                 """Read stderr stream."""
                 for line in iter(stream.readline, ""):
                     chunks.append(line)
-                    if print_lines:
+                    if should_print_progress():
                         tag = format_tag("ERR", color_idx)
                         write_progress(f"{tag} {line.rstrip()}")
                 stream.close()
@@ -418,14 +416,13 @@ class CodexProvider(BaseProvider):
                     process.stdout,
                     response_text_parts,
                     raw_stdout_lines,
-                    print_output,
                     debug_json_logger,
                     color_index,
                 ),
             )
             stderr_thread = threading.Thread(
                 target=read_stderr,
-                args=(process.stderr, stderr_chunks, print_output, color_index),
+                args=(process.stderr, stderr_chunks, color_index),
             )
             stdout_thread.start()
             stderr_thread.start()

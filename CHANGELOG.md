@@ -2,6 +2,26 @@
 
 All notable changes to bmad-assist are documented in this file.
 
+## [0.4.17] - 2026-02-02
+
+### Added
+- **Dashboard: Direct Orchestrator** - In-process LoopController with xterm.js terminal and SSE streaming
+- **Dashboard: Dynamic Log Level** - Change verbosity mid-run, takes effect within 1 second
+- **Dashboard: Elapsed Time** - Real elapsed time from run log instead of fake progress percentage
+- **Sprint** - Support `optional` as valid retrospective status
+
+### Fixed
+- **Dashboard: Current Task Header** - Shows Epic/Story/Phase during run (thanks [@rafaelpini](https://github.com/rafaelpini))
+- **Dashboard: Config Inheritance** - CWD config properly inherited in subprocess via `BMAD_ORIGINAL_CWD`
+- **Dashboard: Pause States** - "PAUSING" badge with spinner; proper button state reset on stop/error
+- **Dashboard: Misc** - Phase banners always visible; epic sorting with mixed IDs; filter `/api/loop/status` from logs
+- **Providers** - Workflow logs at INFO level; safe process termination; dynamic log level from control file
+- **Core** - Rename `CancelledException` → `CancelledError`; UTC timezone for elapsed time calculation
+
+### Changed
+- **Dashboard UI** - Log level control moved to terminal header
+- **Tests** - Mocked timeouts and patch compilation for faster CI
+
 ## [0.4.16] - 2026-02-01
 
 ### Fixed

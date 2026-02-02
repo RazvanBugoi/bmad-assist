@@ -174,6 +174,7 @@ class FakeTestarchConfig:
 
     def __init__(
         self,
+        enabled: bool = True,
         engagement_model: str = "auto",
         atdd_mode: str = "auto",
         framework_mode: str = "auto",
@@ -186,6 +187,7 @@ class FakeTestarchConfig:
         evidence_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
+        self.enabled = enabled  # Master switch for TEA module
         self.engagement_model = engagement_model
         self.atdd_mode = atdd_mode
         self.framework_mode = framework_mode
