@@ -314,8 +314,12 @@ def _resolve_code_files(
     )
 
     # Filter out module dependencies (e.g., "github.com/go-chi/chi/v5 v5.2.5")
+    # and markdown artifacts (e.g., "*Status: ready-for-dev*")
     file_paths = [
-        p for p in file_paths if not _MODULE_DEP_PATTERN.match(p.strip())
+        p for p in file_paths
+        if not _MODULE_DEP_PATTERN.match(p.strip())
+        and not p.strip().startswith("*")
+        and ("/" in p or "." in p)
     ]
 
     if not file_paths:

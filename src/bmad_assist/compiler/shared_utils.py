@@ -558,6 +558,7 @@ def find_sprint_status_file(context: CompilerContext) -> Path | None:
         paths = get_paths()
         candidates.append(paths.implementation_artifacts / "sprint-status.yaml")
         candidates.append(paths.project_knowledge / "sprint-artifacts" / "sprint-status.yaml")
+        candidates.append(paths.project_docs_fallback / "sprint-artifacts" / "sprint-status.yaml")
     except RuntimeError:
         pass
 
@@ -592,7 +593,7 @@ def find_project_context_file(context: CompilerContext) -> Path | None:
     """
     candidates: list[Path] = []
 
-    # Priority 1: External project_knowledge path (if configured)
+    # Priority 1: project_knowledge path (planning_artifacts by default)
     if context.project_knowledge is not None:
         candidates.extend(
             [
@@ -609,12 +610,13 @@ def find_project_context_file(context: CompilerContext) -> Path | None:
         ]
     )
 
-    # Priority 3: Local docs folder (if not using external project_knowledge)
-    if context.project_knowledge is None:
+    # Priority 3: docs/ fallback (brownfield projects)
+    docs_fallback = context.project_root / "docs"
+    if context.project_knowledge is None or context.project_knowledge.resolve() != docs_fallback.resolve():
         candidates.extend(
             [
-                context.project_root / "docs" / "project-context.md",
-                context.project_root / "docs" / "project_context.md",
+                docs_fallback / "project-context.md",
+                docs_fallback / "project_context.md",
             ]
         )
 
@@ -710,19 +712,23 @@ def find_file_in_planning_dir(context: CompilerContext, pattern: str) -> Path | 
     if matches:
         return matches[0]
 
-    # Fallback to project_knowledge (general docs like docs/)
+    # Fallback to project_knowledge and docs/ (brownfield support)
+    checked = {planning_dir.resolve()}
     try:
         from bmad_assist.core.paths import get_paths
 
-        project_knowledge = get_paths().project_knowledge
-        if project_knowledge != planning_dir:
-            matches = sorted(project_knowledge.glob(pattern))
-            if matches:
-                return matches[0]
+        paths = get_paths()
+        for fallback_dir in [paths.project_knowledge, paths.project_docs_fallback]:
+            resolved = fallback_dir.resolve()
+            if resolved not in checked and fallback_dir.exists():
+                checked.add(resolved)
+                matches = sorted(fallback_dir.glob(pattern))
+                if matches:
+                    return matches[0]
     except RuntimeError:
         # Paths not initialized, try context.project_root/docs
         fallback = context.project_root / "docs"
-        if fallback.exists() and fallback != planning_dir:
+        if fallback.resolve() not in checked and fallback.exists():
             matches = sorted(fallback.glob(pattern))
             if matches:
                 return matches[0]

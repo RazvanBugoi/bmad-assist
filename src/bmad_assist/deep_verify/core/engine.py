@@ -135,11 +135,21 @@ class DeepVerifyEngine:
         self._project_root = project_root
         self._helper_provider_config = helper_provider_config
 
+        # Create LLM client with resolved provider (MOVED UP)
+        self._llm_client, self._model = self._create_llm_client()
+
         # Domain detector with fallback creation
         if domain_detector:
             self._domain_detector = domain_detector
         else:
-            self._domain_detector = DomainDetector(project_root=project_root)
+            # Respect configured default timeout for domain detection
+            timeout = self._config.llm_config.default_timeout_seconds
+            self._domain_detector = DomainDetector(
+                project_root=project_root,
+                timeout=timeout,
+                model=self._model,
+                llm_client=self._llm_client,
+            )
 
         # Language detector with fallback creation
         if language_detector:
@@ -155,8 +165,7 @@ class DeepVerifyEngine:
             accept_threshold=self._config.accept_threshold,
         )
 
-        # Create LLM client with resolved provider
-        self._llm_client, self._model = self._create_llm_client()
+
 
         # Method selector with LLM client
         self._method_selector = MethodSelector(
@@ -370,7 +379,7 @@ class DeepVerifyEngine:
 
         # 3. Parallel method execution with partial results
         method_results = await self._run_methods_with_errors(
-            methods, artifact_text, context, timeout
+            methods, artifact_text, context, timeout, domains
         )
 
         # Extract findings and errors from results
@@ -579,6 +588,7 @@ class DeepVerifyEngine:
         artifact_text: str,
         context: VerificationContext | None,
         timeout: int | None,
+        domains: list[ArtifactDomain] | None = None,
     ) -> list[MethodResult]:
         """Run all methods in parallel with timeout and error handling.
 
@@ -591,13 +601,15 @@ class DeepVerifyEngine:
             artifact_text: Text to analyze.
             context: Optional verification context.
             timeout: Optional timeout override.
+            domains: Detected artifact domains for method filtering.
 
         Returns:
             List of MethodResult with findings and error information.
 
         """
         tasks = [
-            self._run_single_method_with_result(m, artifact_text, context, timeout) for m in methods
+            self._run_single_method_with_result(m, artifact_text, context, timeout, domains)
+            for m in methods
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -646,6 +658,7 @@ class DeepVerifyEngine:
         artifact_text: str,
         context: VerificationContext | None,
         timeout: int | None,
+        domains: list[ArtifactDomain] | None = None,
     ) -> MethodResult:
         """Run a single method and return a MethodResult.
 
@@ -654,13 +667,14 @@ class DeepVerifyEngine:
             artifact_text: Text to analyze.
             context: Optional verification context.
             timeout: Optional timeout override.
+            domains: Detected artifact domains for method filtering.
 
         Returns:
             MethodResult with findings or error information.
 
         """
         try:
-            findings = await self._run_single_method(method, artifact_text, context, timeout)
+            findings = await self._run_single_method(method, artifact_text, context, timeout, domains)
             return MethodResult(
                 method_id=method.method_id,
                 findings=findings,
@@ -683,6 +697,7 @@ class DeepVerifyEngine:
         artifact_text: str,
         context: VerificationContext | None,
         timeout: int | None,
+        domains: list[ArtifactDomain] | None = None,
     ) -> list[Finding]:
         """Run a single method with timeout and error handling.
 
@@ -691,6 +706,7 @@ class DeepVerifyEngine:
             artifact_text: Text to analyze.
             context: Optional verification context.
             timeout: Optional timeout override.
+            domains: Detected artifact domains for method filtering.
 
         Returns:
             List of findings from the method, or empty list on timeout/failure.
@@ -701,6 +717,8 @@ class DeepVerifyEngine:
         """
         try:
             kwargs: dict[str, Any] = {}
+            if domains is not None:
+                kwargs["domains"] = domains
             if context is not None:
                 kwargs["context"] = context
 

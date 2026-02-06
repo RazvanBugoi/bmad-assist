@@ -138,29 +138,6 @@
 &lt;!-- VALIDATION_SYNTHESIS_END --&gt;
     </output-format>
 
-    <action>After the synthesis report (outside the markers), output structured metrics for benchmarking:</action>
-    <critical>Include EXACTLY this JSON structure between markers - all fields are REQUIRED:</critical>
-    <output-format><![CDATA[
-<!-- METRICS_JSON_START -->
-{
-  "quality": {
-    "actionable_ratio": <0.0-1.0: (findings with specific fix suggestion) / total_findings, or 1.0 if no findings>,
-    "specificity_score": <0.0-1.0: (findings with location + evidence) / total_findings, or 1.0 if no findings>,
-    "evidence_quality": <0.0-1.0: average per finding of (has_source_citation*0.5 + has_code_snippet*0.3 + has_reasoning*0.2), or 1.0 if no findings>,
-    "follows_template": <true|false: output matches expected synthesis format with all required headings>,
-    "internal_consistency": <0.0-1.0: 1 - (contradictions_count / total_findings), clamped to [0,1], or 1.0 if no findings>
-  },
-  "consensus": {
-    "agreed_findings": <int: count of issues where 3+ validators flagged same problem>,
-    "unique_findings": <int: count of issues flagged by exactly 1 validator>,
-    "disputed_findings": <int: count of issues where validators disagreed>,
-    "missed_findings": 0,
-    "agreement_score": <0.0-1.0: agreed_findings / (agreed + unique + disputed), or 1.0 if denominator is 0>,
-    "false_positive_count": <int: count of findings dismissed as false positives>
-  }
-}
-<!-- METRICS_JSON_END -->
-]]></output-format>
   </step>
 
   <step n="5" goal="Final verification">

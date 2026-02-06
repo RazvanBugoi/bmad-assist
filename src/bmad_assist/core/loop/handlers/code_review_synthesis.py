@@ -37,6 +37,7 @@ from bmad_assist.core.paths import get_paths
 from bmad_assist.core.state import State
 from bmad_assist.core.types import EpicId
 from bmad_assist.deep_verify.integration import load_dv_findings_from_cache
+from bmad_assist.security.integration import load_security_findings_from_cache
 from bmad_assist.validation.reports import extract_synthesis_report
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,68 @@ class CodeReviewSynthesisHandler(BaseHandler):
             }
         except (OSError, json.JSONDecodeError, KeyError, AttributeError) as e:
             logger.warning("Failed to load DV findings: %s", e)
+            return None
+
+    def _get_security_findings_from_cache(self, session_id: str) -> dict[str, Any] | None:
+        """Load security findings from cache if available.
+
+        Applies confidence filtering per config.security_agent.max_findings.
+
+        Args:
+            session_id: The code review session ID.
+
+        Returns:
+            Dict with security findings data or None if not found/error.
+
+        """
+        try:
+            report = load_security_findings_from_cache(session_id, self.project_path)
+            if report is None:
+                return None
+
+            # Apply confidence filtering
+            max_findings = self.config.security_agent.max_findings
+            filtered = report.filter_for_synthesis(
+                min_confidence=0.5,
+                max_findings=max_findings,
+            )
+
+            if not filtered and not report.timed_out:
+                logger.debug("No security findings passed confidence filter")
+                return None
+
+            # Log severity breakdown
+            high = sum(1 for f in filtered if f.severity.upper() == "HIGH")
+            medium = sum(1 for f in filtered if f.severity.upper() == "MEDIUM")
+            low = sum(1 for f in filtered if f.severity.upper() == "LOW")
+            logger.info(
+                "Security findings for synthesis: %d HIGH, %d MEDIUM, %d LOW "
+                "(filtered from %d total)",
+                high, medium, low, len(report.findings),
+            )
+
+            return {
+                "findings": [
+                    {
+                        "id": f.id,
+                        "file_path": f.file_path,
+                        "line_number": f.line_number,
+                        "cwe_id": f.cwe_id,
+                        "severity": f.severity,
+                        "title": f.title,
+                        "description": f.description,
+                        "remediation": f.remediation,
+                        "confidence": f.confidence,
+                    }
+                    for f in filtered
+                ],
+                "languages_detected": report.languages_detected,
+                "timed_out": report.timed_out,
+                "total_findings": len(report.findings),
+                "filtered_count": len(filtered),
+            }
+        except (OSError, json.JSONDecodeError, KeyError, AttributeError, ValueError) as e:
+            logger.warning("Failed to load security findings: %s", e)
             return None
 
     def _get_session_id_from_cache(self) -> str | None:
@@ -217,6 +280,15 @@ class CodeReviewSynthesisHandler(BaseHandler):
                 dv_findings["findings_count"],
             )
 
+        # Load security findings if available
+        security_findings = self._get_security_findings_from_cache(session_id)
+        if security_findings:
+            logger.info(
+                "Including security findings in synthesis: %d findings (timed_out=%s)",
+                security_findings["filtered_count"],
+                security_findings["timed_out"],
+            )
+
         # Get configured paths
         paths = get_paths()
 
@@ -234,6 +306,8 @@ class CodeReviewSynthesisHandler(BaseHandler):
                 "anonymized_reviews": anonymized_reviews,
                 "failed_reviewers": failed_reviewers,  # AC #4: Include failed reviewers for LLM context # noqa: E501
                 "deep_verify_findings": dv_findings,  # Story 26.20: Include DV findings
+                "security_findings": security_findings,  # Security agent findings
+                "security_review_status": "TIMEOUT" if (security_findings and security_findings.get("timed_out")) else "",
             },
         )
 

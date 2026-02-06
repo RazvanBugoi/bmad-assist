@@ -492,6 +492,61 @@ class TestReportGeneration:
         assert "**Verdict:** ACCEPT" in content
         assert "No findings reported" in content
 
+    def test_save_deep_verify_report_with_phase_type(self, temp_project_path, sample_dv_result):
+        """Test phase_type is included in filename and content."""
+        output_dir = temp_project_path / "deep-verify"
+
+        report_path = save_deep_verify_report(
+            result=sample_dv_result,
+            epic=26,
+            story=16,
+            output_dir=output_dir,
+            phase_type="story-validation",
+        )
+
+        assert report_path.exists()
+        # Filename includes phase_type
+        assert "story-validation" in report_path.name
+        assert report_path.name.startswith("deep-verify-26-16-story-validation-")
+
+        content = report_path.read_text()
+        assert "**Phase:** story-validation" in content
+
+    def test_save_deep_verify_report_without_phase_type(self, temp_project_path, sample_dv_result):
+        """Test backward compat: no phase_type uses old filename pattern."""
+        output_dir = temp_project_path / "deep-verify"
+
+        report_path = save_deep_verify_report(
+            result=sample_dv_result,
+            epic=26,
+            story=16,
+            output_dir=output_dir,
+        )
+
+        assert report_path.exists()
+        # Old pattern: deep-verify-{epic}-{story}-{timestamp}.md
+        assert report_path.name.startswith("deep-verify-26-16-2")
+
+        content = report_path.read_text()
+        assert "**Phase:**" not in content
+
+    def test_save_deep_verify_report_code_review_phase(self, temp_project_path, sample_dv_result):
+        """Test code-review phase_type in filename."""
+        output_dir = temp_project_path / "deep-verify"
+
+        report_path = save_deep_verify_report(
+            result=sample_dv_result,
+            epic=26,
+            story=16,
+            output_dir=output_dir,
+            phase_type="code-review",
+        )
+
+        assert report_path.exists()
+        assert "code-review" in report_path.name
+        content = report_path.read_text()
+        assert "**Phase:** code-review" in content
+
 
 # =============================================================================
 # Integration Tests

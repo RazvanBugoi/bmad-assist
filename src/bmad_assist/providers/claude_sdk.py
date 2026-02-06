@@ -247,6 +247,7 @@ class ClaudeSDKProvider(BaseProvider):
         display_model: str | None = None,
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
+        reasoning_effort: str | None = None,
     ) -> ProviderResult:
         """Execute Claude Code SDK with the given prompt.
 

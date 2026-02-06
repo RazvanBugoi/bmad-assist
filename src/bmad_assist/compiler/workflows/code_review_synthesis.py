@@ -272,6 +272,34 @@ class CodeReviewSynthesisCompiler:
             files["[Deep Verify Findings]"] = dv_content
             logger.debug("Added Deep Verify findings to synthesis context")
 
+        # 1e. Security agent findings (if available)
+        security_findings = context.resolved_variables.get("security_findings")
+        if security_findings and isinstance(security_findings, dict):
+            sec_parts: list[str] = []
+            if security_findings.get("timed_out"):
+                sec_parts.append(
+                    "SECURITY REVIEW NOT COMPLETED — security analysis timed out, "
+                    "manual security review recommended\n"
+                )
+            findings_list = security_findings.get("findings", [])
+            if findings_list:
+                for f in findings_list:
+                    sec_parts.append(
+                        f"- [{f.get('severity', 'UNKNOWN')}] {f.get('cwe_id', 'CWE-?')}: "
+                        f"{f.get('title', 'Untitled')} "
+                        f"({f.get('file_path', '?')}:{f.get('line_number', '?')}) "
+                        f"[confidence={f.get('confidence', '?')}]\n"
+                        f"  {f.get('description', '')}"
+                    )
+                    if f.get("remediation"):
+                        sec_parts.append(f"  Remediation: {f['remediation']}")
+            if sec_parts:
+                files["[Security Findings]"] = "\n".join(sec_parts)
+                logger.debug(
+                    "Added security findings to synthesis context: %d findings",
+                    len(findings_list),
+                )
+
         # 2. Reviews (each as a separate file for clean CDATA handling)
         # Sort by reviewer_id for deterministic ordering
         sorted_reviews = sorted(reviews, key=lambda r: r.validator_id)

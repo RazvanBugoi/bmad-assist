@@ -39,6 +39,7 @@ from bmad_assist.providers.base import (
     ProviderResult,
     extract_tool_details,
     format_tag,
+    is_full_stream,
     should_print_progress,
     validate_settings_file,
     write_progress,
@@ -256,6 +257,7 @@ class ClaudeSubprocessProvider(BaseProvider):
         display_model: str | None = None,
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
+        reasoning_effort: str | None = None,
     ) -> ProviderResult:
         """Execute Claude Code CLI with the given prompt.
 
@@ -474,22 +476,33 @@ class ClaudeSubprocessProvider(BaseProvider):
                                     text = block.get("text", "")
                                     text_parts.append(text)
                                     if should_print_progress():
-                                        # Show first 100 chars of each text block
-                                        preview = text[:100].replace("\n", " ")
-                                        if len(text) > 100:
-                                            preview += "..."
-                                        tag = format_tag("ASSISTANT", color_idx)
-                                        write_progress(f"{tag} {preview}")
+                                        if is_full_stream():
+                                            tag = format_tag("ASSISTANT", color_idx)
+                                            write_progress(f"{tag} {text}")
+                                        else:
+                                            preview = text[:100].replace("\n", " ")
+                                            if len(text) > 100:
+                                                preview += "..."
+                                            tag = format_tag("ASSISTANT", color_idx)
+                                            write_progress(f"{tag} {preview}")
                                 elif block.get("type") == "tool_use":
                                     tool_name = block.get("name", "?")
                                     tool_input = block.get("input", {})
                                     if should_print_progress():
-                                        details = extract_tool_details(tool_name, tool_input)
-                                        tag = format_tag(f"TOOL {tool_name}", color_idx)
-                                        if details:
-                                            write_progress(f"{tag} {details}")
+                                        if is_full_stream():
+                                            import json as _json
+
+                                            tag = format_tag(f"TOOL {tool_name}", color_idx)
+                                            write_progress(
+                                                f"{tag} {_json.dumps(tool_input, indent=2)}"
+                                            )
                                         else:
-                                            write_progress(f"{tag}")
+                                            details = extract_tool_details(tool_name, tool_input)
+                                            tag = format_tag(f"TOOL {tool_name}", color_idx)
+                                            if details:
+                                                write_progress(f"{tag} {details}")
+                                            else:
+                                                write_progress(f"{tag}")
 
                         elif msg_type == "result":
                             # Final result with stats

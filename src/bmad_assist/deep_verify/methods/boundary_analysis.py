@@ -179,9 +179,9 @@ class ChecklistAnalysisResponse(BaseModel):
 
     violated: bool
     confidence: float = Field(ge=0.0, le=1.0)
-    evidence_quote: str = ""
+    evidence_quote: str | None = ""
     line_number: int | None = None
-    explanation: str = ""
+    explanation: str | None = ""
 
 
 # =============================================================================
