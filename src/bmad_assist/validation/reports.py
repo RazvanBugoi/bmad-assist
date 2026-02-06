@@ -500,8 +500,6 @@ def save_validation_report(
         "type": "validation",
         "role_id": file_role_id,
         "validator_id": validator_label,
-        "provider": output.provider,
-        "model": output.model,
         "timestamp": timestamp.isoformat(),
         "epic": epic,
         "story": story,

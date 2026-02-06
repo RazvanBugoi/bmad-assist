@@ -40,7 +40,7 @@ class TestSaveCodeReviewReport:
         reviews_dir: Path,
         sample_validation_output: ValidationOutput,
     ) -> None:
-        """Test YAML frontmatter contains provider and model fields."""
+        """Test YAML frontmatter excludes provider/model to preserve anonymization."""
         result_path = _save_code_review_report(
             output=sample_validation_output,
             epic=12,
@@ -59,8 +59,8 @@ class TestSaveCodeReviewReport:
         assert metadata["type"] == "code-review"
         assert metadata["role_id"] == "a"
         assert metadata["reviewer_id"] == "Validator A"
-        assert metadata["provider"] == "gemini"
-        assert metadata["model"] == "gemini-1.5-pro"
+        assert "provider" not in metadata  # Excluded to preserve anonymization
+        assert "model" not in metadata
         assert "timestamp" in metadata
         assert metadata["epic"] == 12
         assert metadata["story"] == 5

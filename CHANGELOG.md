@@ -15,7 +15,7 @@ All notable changes to bmad-assist are documented in this file.
 - **Parser: Bracketed Statuses** - Support `[DONE]`/`[IN PROGRESS]` status format in story headers and mixed standard/fallback story formats in epic files (PR #1, thanks [@DevRGT](https://github.com/DevRGT))
 - **Deep Verify: Helper Config** - Propagate helper provider config to `DomainDetector`; add pricing for `zai-coding-plan` models
 - **Sharding: Empty Directory Precedence** - Single file now takes precedence over empty sharded directory
-- **Reporting: Provider Traceability** - Add provider and model fields to validation/code review report YAML headers
+- **Anonymization: Provider Leak** - Removed provider/model fields from report YAML frontmatter that defeated reviewer anonymization; deanonymization mapping in `.bmad-assist/cache/` already stores this info
 - **CI: Lint/Type Errors** - Fix 4 mypy errors in `epic_transitions.py`, 16 ruff issues in parser/sharding modules
 - **Dependencies** - Remove `typer[all]` extra, bump typer to 0.21.1
 - **Compiler** - Remove `__init__.py` from hyphenated `security-review` workflow directory (mypy fix)

@@ -1144,8 +1144,6 @@ def _save_code_review_report(
         "session_id": session_id,
         "role_id": role_id,
         "reviewer_id": anonymized_id or f"Reviewer {role_id.upper()}",
-        "provider": output.provider,
-        "model": output.model,
         "timestamp": timestamp.isoformat(),
         "epic": epic,
         "story": story,
