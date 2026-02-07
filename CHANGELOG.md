@@ -15,7 +15,7 @@ All notable changes to bmad-assist are documented in this file.
 - **Deep Verify: File List Extraction** - Regex was extracting file descriptions instead of paths from DV output
 - **Deep Verify: DV Report Aggregation** - Aggregate per-file DV results into single archival report during code review phase
 - **Scorecard: Broken Metric** - Replaced non-functional `stories_completed` with `test_to_code_ratio` metric
-- **Dashboard: Mixed ID Sorting** - Resolve `TypeError` when sorting stories with mixed numeric/string IDs (PR #11, thanks [@juanarboleda](https://github.com/juanarboleda))
+- **Dashboard: Mixed ID Sorting** - Resolve `TypeError` when sorting stories with mixed numeric/string IDs (PR #11, thanks [@DevRGT](https://github.com/DevRGT))
 
 ## [0.4.23] - 2026-02-06
 
