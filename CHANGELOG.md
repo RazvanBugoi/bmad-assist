@@ -2,6 +2,20 @@
 
 All notable changes to bmad-assist are documented in this file.
 
+## [0.4.26] - 2026-02-08
+
+### Added
+- **A/B Analysis CLI** - Standalone `ab-analysis` command to re-run LLM analysis on existing A/B test results
+- **CodeQL Advanced Setup** - Custom workflow with config excluding intentional vulnerability corpus
+
+### Changed
+- **A/B Testing: Per-Story Refs** - Stories use `{id, ref}` objects; each pins to its own git commit. `analysis: true` enables LLM-powered variant comparison
+- **Docs** - README rewrite with plain-language intro and new feature sections; experiments.md and ab-testing.md updated to match current code
+
+### Fixed
+- **Security: CodeQL Alerts** - Resolve 10 of 11 alerts: workflow permissions, socket binds hardened to localhost, URL assertion refactors, vuln test corpus excluded
+- **A/B: ConfigError on Analysis** - Fixed singleton reset crash in `generate_ab_analysis()`
+
 ## [0.4.25] - 2026-02-08
 
 ### Added

@@ -262,6 +262,7 @@ class ABTestRunner:
                     analysis_path = generate_ab_analysis(
                         config=config,
                         result_dir=result_dir,
+                        experiments_dir=self._experiments_dir,
                     )
                 except Exception:
                     logger.exception("Analysis generation failed")
