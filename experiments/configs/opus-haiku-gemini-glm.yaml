@@ -1,6 +1,5 @@
-# bmad-assist configuration (optimized example)
-# This is an optimized reference config with recommended settings.
-# Copy to your project and customize provider settings as needed.
+config_name: opus-haiku-gemini-glm
+description: "Opus master + Haiku helper + Gemini fleet + GLM via Claude subprocess"
 
 project_name: project-name
 user_name: Tester
@@ -19,7 +18,7 @@ timeouts:
   validate_story_synthesis: 900 # 15 m
   dev_story: 3600               # 1 h
   code_review_synthesis: 1200   # 20 m
-  
+
 providers:
   # Default provider used for single-LLM phases when no phase_models specified
   master:
@@ -126,18 +125,18 @@ phase_models:
     #   model: gemini-3-pro-preview
     - provider: gemini
       model: gemini-3-flash-preview
-    - provider: gemini
-      model: gemini-2.5-flash
-    - provider: gemini
-      model: gemini-2.5-flash-lite
-    - provider: gemini
-      model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
     #   thinking: true
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
-      thinking: true
+    #   thinking: true
     - provider: claude
       model: sonnet
       model_name: glm-4.7
@@ -150,19 +149,23 @@ phase_models:
     #   model: sonnet
     #   model_name: glm-4.7
     #   settings: ~/.claude/glm.json
+    - provider: claude
+      model: haiku
+    - provider: claude
+      model: opus
 
   # Same for code_review - full control over reviewer list
   code_review:
+    - provider: gemini
+      model: gemini-3-pro-preview
     # - provider: gemini
-    #   model: gemini-3-pro-preview
-    - provider: gemini
-      model: gemini-3-flash-preview
-    - provider: gemini
-      model: gemini-2.5-flash
-    - provider: gemini
-      model: gemini-2.5-flash-lite
-    - provider: gemini
-      model: gemini-2.5-flash-lite
+    #   model: gemini-3-flash-preview
+    # - provider: gemini
+    #   model: gemini-2.5-flash
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
     #   thinking: true
@@ -181,7 +184,10 @@ phase_models:
     #   model: sonnet
     #   model_name: glm-4.7
     #   settings: ~/.claude/glm.json
-
+    - provider: claude
+      model: haiku
+    - provider: claude
+      model: opus
 
 # Compiler configuration
 compiler:
@@ -283,13 +289,13 @@ testarch:
 
 # Deep Verify configuration - multi-method artifact verification
 deep_verify:
-  enabled: true                       # Master switch for Deep Verify module
+  enabled: false                       # Master switch for Deep Verify module
 
   # Provider configuration (optional)
   # If not specified, uses global 'helper' provider from providers section
   # Uncomment to override with a different provider for Deep Verify methods
   # provider:
-  #   provider: claude     # Provider name: claude, claude-sdk, gemini, kimi
+  #   provider: claude-subprocess     # Provider name: claude-subprocess, claude-sdk, gemini, kimi
   #   model: haiku                    # Model identifier for LLM calls
   #   # model_name: custom-name       # Display name (optional, for logs)
   #   # settings: ~/.claude/custom.json  # Settings file path (optional)
@@ -362,20 +368,20 @@ deep_verify:
     timeout_seconds: 90
 
 security_agent:
-  enabled: true
+  enabled: false
   max_findings: 15
 
 notifications:
-  enabled: true
-  providers:
-    - type: telegram
-      bot_token: "${TELEGRAM_BOT_TOKEN}"
-      chat_id: "${TELEGRAM_CHAT_ID}"
-    - type: discord
-      webhook_url: "${DISCORD_WEBHOOK_URL}"
-  events:
-    - story_started
-    - story_completed
-    - phase_completed
-    - error_occurred
-    - anomaly_detected
+  enabled: false
+  # providers:
+  #   - type: telegram
+  #     bot_token: "${TELEGRAM_BOT_TOKEN}"
+  #     chat_id: "${TELEGRAM_CHAT_ID}"
+  #   - type: discord
+  #     webhook_url: "${DISCORD_WEBHOOK_URL}"
+  # events:
+  #   - story_started
+  #   - story_completed
+  #   - phase_completed
+  #   - error_occurred
+  #   - anomaly_detected

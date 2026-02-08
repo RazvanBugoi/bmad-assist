@@ -593,9 +593,9 @@ class OpenCodeProvider(BaseProvider):
                         partial_result=partial_result,
                     ) from None
 
-                # Wait for threads to finish
-                stdout_thread.join()
-                stderr_thread.join()
+                # Wait for threads to finish (timeout prevents hang if reader stuck)
+                stdout_thread.join(timeout=10)
+                stderr_thread.join(timeout=10)
 
             except FileNotFoundError as e:
                 logger.error("OpenCode CLI not found in PATH")

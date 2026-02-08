@@ -915,28 +915,128 @@ def apply_post_process(xml: str, context: CompilerContext) -> str:
         return xml
 
 
-def format_dv_findings_for_prompt(dv_findings: dict[str, Any]) -> str:
-    """Format Deep Verify findings dict as markdown for LLM prompt.
+def _prioritize_findings(
+    findings: list[dict[str, Any]],
+    max_findings: int = 20,
+    overflow_tolerance: int = 6,
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    """Prioritize and truncate DV findings for synthesis prompt.
 
-    Handles two dict schemas:
-    - Code review handler: domains/methods/method keys, pre-computed counts
-    - Validate story handler (serialize_validation_result): domains_detected/
-      methods_executed/method_id keys, no pre-computed counts
+    Sort key: (severity_rank, -avg_domain_confidence, file_path, -max_evidence_confidence)
+
+    Truncation rules:
+    1. ALL critical findings always included — no limit
+    2. Non-critical: fill up to max_findings - len(criticals)
+    3. Domain integrity: if adding a finding would exceed budget but same
+       (severity, domain) group has <= overflow_tolerance more items, include all
+    4. If group exceeds overflow tolerance, stop before it (no partial)
 
     Args:
-        dv_findings: Dict with verdict, score, findings list, domains, methods.
+        findings: List of finding dicts (with optional file_path, evidence).
+        max_findings: Maximum findings to include (criticals exempt).
+        overflow_tolerance: Extra items allowed to keep domain group intact.
 
     Returns:
-        Markdown-formatted string for inclusion in prompt.
+        Tuple of (prioritized_findings, omitted_count, omitted_by_severity).
 
     """
-    if not isinstance(dv_findings, dict):
-        return "# Deep Verify: No data available"
+    severity_rank = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 
-    # F1: Support both handler schemas for findings list
-    findings = dv_findings.get("findings", [])
+    # Compute avg domain confidence across all findings per domain
+    domain_confidences: dict[str, list[float]] = {}
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        domain = f.get("domain") or "unknown"
+        for e in f.get("evidence", []):
+            if isinstance(e, dict) and isinstance(e.get("confidence"), (int, float)):
+                domain_confidences.setdefault(domain, []).append(e["confidence"])
 
-    # F1: Compute counts from findings when pre-computed fields absent
+    avg_domain_conf: dict[str, float] = {}
+    for domain, confs in domain_confidences.items():
+        avg_domain_conf[domain] = sum(confs) / len(confs) if confs else 0.0
+
+    def sort_key(f: dict[str, Any]) -> tuple[int, float, str, float]:
+        sev = severity_rank.get(f.get("severity", "info"), 3)
+        domain = f.get("domain") or "unknown"
+        avg_conf = avg_domain_conf.get(domain, 0.0)
+        fp = f.get("file_path") or ""
+        max_ev_conf = max(
+            (
+                e.get("confidence", 0.0)
+                for e in f.get("evidence", [])
+                if isinstance(e, dict)
+            ),
+            default=0.0,
+        )
+        return (sev, -avg_conf, fp, -max_ev_conf)
+
+    valid = [f for f in findings if isinstance(f, dict)]
+    sorted_findings = sorted(valid, key=sort_key)
+
+    # Split criticals from non-criticals
+    criticals = [f for f in sorted_findings if f.get("severity") == "critical"]
+    non_criticals = [f for f in sorted_findings if f.get("severity") != "critical"]
+
+    budget = max(0, max_findings - len(criticals))
+    included: list[dict[str, Any]] = list(criticals)
+
+    # Process non-criticals with domain integrity
+    i = 0
+    while i < len(non_criticals) and len(included) - len(criticals) < budget:
+        f = non_criticals[i]
+        included.append(f)
+        i += 1
+
+    # Check if next group fits within overflow tolerance
+    while i < len(non_criticals):
+        f = non_criticals[i]
+        group_sev = f.get("severity")
+        group_domain = f.get("domain")
+
+        # Count remaining items in this (severity, domain) group
+        group_remaining = 0
+        for j in range(i, len(non_criticals)):
+            nf = non_criticals[j]
+            if nf.get("severity") == group_sev and nf.get("domain") == group_domain:
+                group_remaining += 1
+            else:
+                break
+
+        if group_remaining <= overflow_tolerance:
+            # Include entire group
+            for j in range(i, i + group_remaining):
+                included.append(non_criticals[j])
+            i += group_remaining
+        else:
+            break
+
+    # Skip everything after the break
+    omitted = [f for f in valid if f not in included]
+    omitted_by_sev: dict[str, int] = {}
+    for f in omitted:
+        sev = f.get("severity", "unknown")
+        omitted_by_sev[sev] = omitted_by_sev.get(sev, 0) + 1
+
+    return included, len(omitted), omitted_by_sev
+
+
+def _render_flat_findings(
+    findings: list[dict[str, Any]],
+    dv_findings: dict[str, Any],
+) -> str:
+    """Render DV findings as flat markdown (original format).
+
+    Used for Schema B (validate-story handler) and any input without file_path.
+
+    Args:
+        findings: List of finding dicts.
+        dv_findings: Full DV findings dict with verdict, score, domains, methods.
+
+    Returns:
+        Markdown-formatted string.
+
+    """
     findings_count = dv_findings.get("findings_count", len(findings))
     critical_count = dv_findings.get(
         "critical_count",
@@ -960,22 +1060,19 @@ def format_dv_findings_for_prompt(dv_findings: dict[str, Any]) -> str:
         "",
     ]
 
-    # F1: Support both "domains" (code_review handler) and "domains_detected" (serialize)
+    # Support both "domains" (code_review handler) and "domains_detected" (serialize)
     domains = dv_findings.get("domains") or dv_findings.get("domains_detected", [])
     for domain in domains:
         if not isinstance(domain, dict):
             continue
-        # F3: Use .get() instead of direct dict access
         lines.append(
             f"- **{domain.get('domain', '?')}** (confidence: {domain.get('confidence', 0):.2f})"
         )
 
     lines.extend(["", "## Methods Executed", ""])
-    # F1: Support both "methods" (code_review handler) and "methods_executed" (serialize)
     methods = dv_findings.get("methods") or dv_findings.get("methods_executed", [])
     lines.append(", ".join(str(m) for m in methods) if methods else "None")
 
-    # F6: Only emit Findings header if there are findings
     if findings:
         lines.extend(["", "## Findings", ""])
 
@@ -987,7 +1084,6 @@ def format_dv_findings_for_prompt(dv_findings: dict[str, Any]) -> str:
                 f"### [{severity}] {finding.get('id', '?')}: {finding.get('title', 'Untitled')}"
             )
             lines.append("")
-            # F1: Support both "method" (code_review handler) and "method_id" (serialize)
             method = finding.get("method") or finding.get("method_id", "?")
             lines.append(f"**Method:** {method}")
             if finding.get("domain"):
@@ -1006,7 +1102,6 @@ def format_dv_findings_for_prompt(dv_findings: dict[str, Any]) -> str:
                     line_num = e.get("line_number")
                     if quote:
                         lines.append(f"> {quote}")
-                    # F5: Show line number even when quote is empty
                     if line_num is not None:
                         lines.append(f"> *Line {line_num}*")
                     if quote or line_num is not None:
@@ -1014,3 +1109,194 @@ def format_dv_findings_for_prompt(dv_findings: dict[str, Any]) -> str:
             lines.append("")
 
     return "\n".join(lines)
+
+
+def _render_grouped_findings(
+    prioritized: list[dict[str, Any]],
+    omitted_count: int,
+    omitted_by_sev: dict[str, int],
+    dv_findings: dict[str, Any],
+) -> str:
+    """Render prioritized DV findings as grouped markdown.
+
+    Groups findings by severity -> domain -> file_path with line ranges.
+
+    Args:
+        prioritized: Prioritized and truncated findings list.
+        omitted_count: Number of findings omitted.
+        omitted_by_sev: Omitted count breakdown by severity.
+        dv_findings: Full DV findings dict with verdict, score, domains, methods.
+
+    Returns:
+        Markdown-formatted string with hierarchical grouping.
+
+    """
+    total_findings = len(prioritized) + omitted_count
+    verdict = dv_findings.get("verdict", "UNKNOWN")
+    score = dv_findings.get("score", 0)
+
+    lines = [
+        "# Deep Verify Analysis Results",
+        "",
+        f"**Verdict:** {verdict} | **Score:** {score:.1f}",
+        "",
+    ]
+
+    if not prioritized:
+        lines.append("No findings.")
+        return "\n".join(lines)
+
+    lines.append(
+        f"## Findings ({len(prioritized)} of {total_findings}"
+        " — prioritized by severity, domain confidence)"
+    )
+    lines.append("")
+
+    # Compute avg domain confidence (same as _prioritize_findings)
+    domain_confidences: dict[str, list[float]] = {}
+    # Use all findings including omitted for accurate domain avg
+    all_findings = dv_findings.get("findings", [])
+    for f in all_findings:
+        if not isinstance(f, dict):
+            continue
+        domain = f.get("domain") or "unknown"
+        for e in f.get("evidence", []):
+            if isinstance(e, dict) and isinstance(e.get("confidence"), (int, float)):
+                domain_confidences.setdefault(domain, []).append(e["confidence"])
+
+    avg_domain_conf: dict[str, float] = {}
+    for domain, confs in domain_confidences.items():
+        avg_domain_conf[domain] = sum(confs) / len(confs) if confs else 0.0
+
+    # Group by (severity, domain, file_path)
+    from collections import OrderedDict
+
+    # Build groups preserving sort order
+    groups: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = OrderedDict()
+    for f in prioritized:
+        sev = f.get("severity", "unknown")
+        domain = f.get("domain") or "unknown"
+        fp = f.get("file_path") or "unknown"
+        key = (sev, domain)
+        if key not in groups:
+            groups[key] = OrderedDict()
+        if fp not in groups[key]:
+            groups[key][fp] = []
+        groups[key][fp].append(f)
+
+    current_sev_domain: tuple[str, str] | None = None
+
+    for (sev, domain), file_groups in groups.items():
+        # Emit severity-domain header
+        if (sev, domain) != current_sev_domain:
+            current_sev_domain = (sev, domain)
+            avg_conf = avg_domain_conf.get(domain, 0.0)
+            lines.append(f"### {sev.upper()} — {domain} (avg confidence: {avg_conf:.2f})")
+            lines.append("")
+
+        for fp, file_findings in file_groups.items():
+            # Collect all line numbers for this file group
+            all_line_nums: list[int] = []
+            for ff in file_findings:
+                for e in ff.get("evidence", []):
+                    if isinstance(e, dict) and isinstance(e.get("line_number"), int):
+                        all_line_nums.append(e["line_number"])
+
+            # Build file header with line range
+            if all_line_nums:
+                min_l, max_l = min(all_line_nums), max(all_line_nums)
+                if min_l == max_l:
+                    line_range = f"(L{min_l})"
+                else:
+                    line_range = f"(L{min_l}-L{max_l})"
+                lines.append(f"**{fp}** {line_range}")
+            else:
+                lines.append(f"**{fp}**")
+
+            # Render each finding as a compact line
+            for ff in file_findings:
+                # Max evidence confidence for this finding
+                max_conf = max(
+                    (
+                        e.get("confidence", 0.0)
+                        for e in ff.get("evidence", [])
+                        if isinstance(e, dict)
+                    ),
+                    default=0.0,
+                )
+                title = ff.get("title", "Untitled")
+
+                # Individual line numbers
+                finding_lines: list[int] = []
+                for e in ff.get("evidence", []):
+                    if isinstance(e, dict) and isinstance(e.get("line_number"), int):
+                        finding_lines.append(e["line_number"])
+
+                if finding_lines:
+                    line_refs = ", ".join(f"L{ln}" for ln in finding_lines)
+                    lines.append(f"- [{max_conf:.2f}] {title} ({line_refs})")
+                else:
+                    lines.append(f"- [{max_conf:.2f}] {title}")
+
+            lines.append("")
+
+    # Domains Detected and Methods Executed (after findings)
+    lines.append("## Domains Detected")
+    lines.append("")
+    domains = dv_findings.get("domains") or dv_findings.get("domains_detected", [])
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        lines.append(
+            f"- **{domain.get('domain', '?')}** (confidence: {domain.get('confidence', 0):.2f})"
+        )
+
+    lines.extend(["", "## Methods Executed", ""])
+    methods = dv_findings.get("methods") or dv_findings.get("methods_executed", [])
+    lines.append(", ".join(str(m) for m in methods) if methods else "None")
+
+    # Omitted footer
+    if omitted_count > 0:
+        breakdown = ", ".join(f"{c} {s}" for s, c in sorted(omitted_by_sev.items()))
+        lines.extend([
+            "",
+            "---",
+            f"⚠️ {omitted_count} lower-priority findings omitted ({breakdown})",
+        ])
+
+    return "\n".join(lines)
+
+
+def format_dv_findings_for_prompt(dv_findings: dict[str, Any]) -> str:
+    """Format Deep Verify findings dict as markdown for LLM prompt.
+
+    Dispatches to grouped rendering (with prioritization) when findings
+    contain file_path, or flat rendering for backward compatibility.
+
+    Handles two dict schemas:
+    - Code review handler: domains/methods/method keys, pre-computed counts
+    - Validate story handler (serialize_validation_result): domains_detected/
+      methods_executed/method_id keys, no pre-computed counts
+
+    Args:
+        dv_findings: Dict with verdict, score, findings list, domains, methods.
+
+    Returns:
+        Markdown-formatted string for inclusion in prompt.
+
+    """
+    if not isinstance(dv_findings, dict):
+        return "# Deep Verify: No data available"
+
+    findings = dv_findings.get("findings", [])
+
+    has_file_paths = any(
+        isinstance(f, dict) and f.get("file_path")
+        for f in findings
+    )
+
+    if has_file_paths:
+        prioritized, omitted, omitted_by_sev = _prioritize_findings(findings)
+        return _render_grouped_findings(prioritized, omitted, omitted_by_sev, dv_findings)
+    else:
+        return _render_flat_findings(findings, dv_findings)

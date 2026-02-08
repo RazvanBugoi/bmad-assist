@@ -24,7 +24,7 @@ import signal
 import threading
 import time
 from pathlib import Path
-from subprocess import PIPE, Popen
+from subprocess import PIPE, Popen, TimeoutExpired
 from typing import Any
 
 from bmad_assist.core.debug_logger import DebugJsonLogger
@@ -147,11 +147,12 @@ class ClaudeSubprocessProvider(BaseProvider):
             return  # Process already gone
 
         # Wait up to 3 seconds for graceful exit
-        for _ in range(30):
-            if process.poll() is not None:
-                logger.debug("Process terminated gracefully")
-                return
-            time.sleep(0.1)
+        try:
+            process.wait(timeout=3)
+            logger.debug("Process terminated gracefully")
+            return
+        except TimeoutExpired:
+            pass
 
         # Phase 2: SIGKILL if still running
         logger.warning("Process did not terminate, escalating to SIGKILL")
@@ -570,10 +571,6 @@ class ClaudeSubprocessProvider(BaseProvider):
             cancelled = False
 
             while True:
-                returncode = process.poll()
-                if returncode is not None:
-                    break
-
                 # Check for cancellation
                 if cancel_token is not None and cancel_token.is_set():
                     logger.info("Cancel token set, terminating subprocess")
@@ -619,12 +616,16 @@ class ClaudeSubprocessProvider(BaseProvider):
                         partial_result=partial_result,
                     )
 
-                # Poll interval - short enough for responsive cancel
-                time.sleep(0.1)
+                # Block on process (0.5s intervals for cancel responsiveness)
+                try:
+                    returncode = process.wait(timeout=0.5)
+                    break
+                except TimeoutExpired:
+                    continue
 
-            # Wait for threads to finish
-            stdout_thread.join()
-            stderr_thread.join()
+            # Wait for threads to finish (timeout prevents hang if reader stuck)
+            stdout_thread.join(timeout=10)
+            stderr_thread.join(timeout=10)
 
             # Clear current process
             with self._process_lock:
@@ -735,7 +736,7 @@ class ClaudeSubprocessProvider(BaseProvider):
             stderr=final_stderr,
             exit_code=final_returncode,
             duration_ms=duration_ms,
-            model=effective_model,
+            model=display_model or effective_model,
             command=tuple(command),
             provider_session_id=provider_session_id,
         )

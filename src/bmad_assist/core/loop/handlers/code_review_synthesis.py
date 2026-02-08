@@ -36,7 +36,6 @@ from bmad_assist.core.loop.types import PhaseResult
 from bmad_assist.core.paths import get_paths
 from bmad_assist.core.state import State
 from bmad_assist.core.types import EpicId
-from bmad_assist.deep_verify.integration import load_dv_findings_from_cache
 from bmad_assist.security.integration import load_security_findings_from_cache
 from bmad_assist.validation.reports import extract_synthesis_report
 
@@ -66,55 +65,93 @@ class CodeReviewSynthesisHandler(BaseHandler):
         return self._build_common_context(state)
 
     def _get_dv_findings_from_cache(self, session_id: str) -> dict[str, Any] | None:
-        """Load Deep Verify findings from cache if available.
+        """Load Deep Verify findings from cache with file_path injection.
 
         Story 26.20: Load DV findings for inclusion in synthesis prompt.
+
+        Reads cache JSON files directly (same glob pattern as
+        load_dv_findings_from_cache) to preserve the file_path metadata
+        that would otherwise be discarded during deserialization. Injects
+        file_path into each finding dict for grouped rendering.
 
         Args:
             session_id: The code review session ID.
 
         Returns:
-            Dict with DV findings data or None if not found/error.
+            Dict with DV findings data (including file_path per finding)
+            or None if not found/error.
 
         """
         try:
-            dv_result = load_dv_findings_from_cache(session_id, self.project_path)
-            if dv_result is None:
+            cache_dir = self.project_path / ".bmad-assist" / "cache"
+            if not cache_dir.exists():
                 return None
 
-            # Convert to dict for template rendering
+            pattern = f"deep-verify-{session_id}-*.json"
+            cache_files = list(cache_dir.glob(pattern))
+            if not cache_files:
+                logger.debug("DV findings cache not found for session: %s", session_id)
+                return None
+
+            all_findings: list[dict[str, Any]] = []
+            all_domains: list[dict[str, Any]] = []
+            all_methods: set[str] = set()
+            worst_verdict: str | None = None
+            min_score = 100.0
+            verdict_rank = {"REJECT": 0, "UNCERTAIN": 1, "ACCEPT": 2}
+
+            for cache_file in cache_files:
+                with open(cache_file, encoding="utf-8") as f:
+                    data = json.load(f)
+
+                file_path = data.get("file_path")
+                verdict = data.get("verdict", "ACCEPT")
+                score = data.get("score", 100.0)
+
+                # Track worst verdict (REJECT > UNCERTAIN > ACCEPT)
+                if worst_verdict is None or verdict_rank.get(
+                    verdict, 2
+                ) < verdict_rank.get(worst_verdict, 2):
+                    worst_verdict = verdict
+
+                min_score = min(min_score, score)
+
+                # Collect domains
+                for d in data.get("domains_detected", []):
+                    if isinstance(d, dict):
+                        all_domains.append(d)
+
+                # Collect methods
+                for m in data.get("methods_executed", []):
+                    all_methods.add(str(m))
+
+                # Inject file_path into each finding
+                for finding in data.get("findings", []):
+                    if not isinstance(finding, dict):
+                        continue
+                    finding["file_path"] = file_path
+                    all_findings.append(finding)
+
+            if not all_findings and worst_verdict is None:
+                return None
+
+            findings_count = len(all_findings)
+            critical_count = sum(
+                1 for f in all_findings if f.get("severity") == "critical"
+            )
+            error_count = sum(
+                1 for f in all_findings if f.get("severity") == "error"
+            )
+
             return {
-                "verdict": dv_result.verdict.value,
-                "score": dv_result.score,
-                "findings_count": len(dv_result.findings),
-                "critical_count": sum(
-                    1 for f in dv_result.findings if f.severity.value == "critical"
-                ),
-                "error_count": sum(1 for f in dv_result.findings if f.severity.value == "error"),
-                "domains": [
-                    {"domain": d.domain.value, "confidence": d.confidence}
-                    for d in dv_result.domains_detected
-                ],
-                "methods": list(dv_result.methods_executed),
-                "findings": [
-                    {
-                        "id": f.id,
-                        "severity": f.severity.value,
-                        "title": f.title,
-                        "description": f.description,
-                        "method": f.method_id,
-                        "domain": f.domain.value if f.domain else None,
-                        "evidence": [
-                            {
-                                "quote": e.quote,
-                                "line_number": e.line_number,
-                                "confidence": e.confidence,
-                            }
-                            for e in f.evidence
-                        ],
-                    }
-                    for f in dv_result.findings
-                ],
+                "verdict": worst_verdict or "ACCEPT",
+                "score": min_score,
+                "findings_count": findings_count,
+                "critical_count": critical_count,
+                "error_count": error_count,
+                "domains": all_domains,
+                "methods": sorted(all_methods),
+                "findings": all_findings,
             }
         except (OSError, json.JSONDecodeError, KeyError, AttributeError) as e:
             logger.warning("Failed to load DV findings: %s", e)

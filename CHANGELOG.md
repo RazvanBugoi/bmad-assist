@@ -2,6 +2,23 @@
 
 All notable changes to bmad-assist are documented in this file.
 
+## [0.4.25] - 2026-02-08
+
+### Added
+- **A/B Workflow Tester** - Comparative workflow testing with git worktree isolation, per-story ref checkouts, artifact snapshots, LLM analysis, workflow/template sets, and full config pass-through per variant
+- **Deep Verify Synthesis: Grouped Findings** - Findings grouped by `file_path` with prioritization
+
+### Performance
+- **Providers: CPU/Memory Hotspots** - Replace busy-wait poll loop in `claude.py` with blocking `process.wait()` (10→2 wakeups/sec); reduce pause polling from 100ms to 2s; add `timeout=10` to `thread.join()` in all 8 subprocess providers
+
+### Changed
+- **Claude Provider: `claude` is now primary** - Use `provider: claude` (SDK-based) instead of `provider: claude-subprocess` (legacy). SDK provider now supports streaming input, cancel, display_model, and prefers system CLI. `claude-subprocess` is retained for benchmarking only. Upgrade `claude-agent-sdk` 0.1.20 → 0.1.33
+
+### Fixed
+- **A/B: Worktree Artifact Bleed** - Gitignored artifact dirs leaked between stories; now purged before each ref checkout
+- **A/B: Hardcoded Provider** - Analysis used hardcoded `claude-sdk`/`opus` instead of master provider from config
+- **Scorecard: Float Rounding** - Round scores to prevent IEEE 754 artifacts in YAML
+
 ## [0.4.24] - 2026-02-07
 
 ### Changed

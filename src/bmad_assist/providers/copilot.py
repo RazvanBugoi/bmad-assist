@@ -313,8 +313,8 @@ class CopilotProvider(BaseProvider):
                             partial_result=partial_result,
                         ) from None
 
-                    stdout_thread.join()
-                    stderr_thread.join()
+                    stdout_thread.join(timeout=10)
+                    stderr_thread.join(timeout=10)
 
                 except FileNotFoundError as e:
                     logger.error("Copilot CLI not found in PATH")

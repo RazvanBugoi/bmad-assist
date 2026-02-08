@@ -466,8 +466,8 @@ class TestRenderPromptSecurityFindings:
             patch(
                 "bmad_assist.core.loop.handlers.code_review_synthesis.load_security_findings_from_cache",
             ) as mock_load_sec,
-            patch(
-                "bmad_assist.core.loop.handlers.code_review_synthesis.load_dv_findings_from_cache",
+            patch.object(
+                handler, "_get_dv_findings_from_cache",
                 return_value=None,
             ),
             patch(
@@ -548,8 +548,8 @@ class TestRenderPromptSecurityFindings:
                 "bmad_assist.core.loop.handlers.code_review_synthesis.load_security_findings_from_cache",
                 return_value=None,
             ),
-            patch(
-                "bmad_assist.core.loop.handlers.code_review_synthesis.load_dv_findings_from_cache",
+            patch.object(
+                handler, "_get_dv_findings_from_cache",
                 return_value=None,
             ),
             patch(
