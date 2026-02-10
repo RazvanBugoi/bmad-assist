@@ -834,3 +834,101 @@ class AssumptionSurfacingMethod(BaseVerificationMethod):
             return ArtifactDomain.API
 
         return None
+
+    # =========================================================================
+    # Batch Interface
+    # =========================================================================
+
+    @property
+    def supports_batch(self) -> bool:
+        """Whether this method supports batch mode."""
+        return True
+
+    def get_method_prompt(self, **kwargs: object) -> str:
+        """Return method's analysis instructions WITHOUT file content.
+
+        Sent as Turn 1 of multi-turn batch session. Includes the system prompt,
+        category descriptions, and JSON format instructions.
+
+        Args:
+            **kwargs: Additional context (unused for this method).
+
+        Returns:
+            Method instruction prompt string.
+
+        """
+        # Build category descriptions (same logic as _build_prompt)
+        category_descriptions = []
+        for cat in self._categories:
+            definition = ASSUMPTION_CATEGORIES[cat]
+            category_descriptions.append(f"- {cat.value.upper()}: {definition.description}")
+
+        categories_str = "\n".join(category_descriptions)
+
+        return (
+            f"{ASSUMPTION_SURFACING_SYSTEM_PROMPT}\n\n"
+            f"Categories to analyze:\n"
+            f"{categories_str}\n\n"
+            f"Identify all implicit assumptions in the artifact. "
+            f"For each assumption, provide:\n"
+            f"- assumption: Description of the implicit assumption\n"
+            f"- category: One of [environmental, ordering, data, timing, contract]\n"
+            f"- violation_risk: One of [high, medium, low]\n"
+            f"- evidence_quote: Code snippet showing where assumption is made\n"
+            f"- line_number: Integer line number or null if not identifiable (NEVER use task IDs, labels, or non-numeric values)\n"
+            f"- consequences: What happens if assumption is violated\n"
+            f"- recommendation: How to handle or document the assumption\n\n"
+            f"Respond with JSON in this format:\n"
+            f"{{\n"
+            f'    "assumptions": [\n'
+            f"        {{\n"
+            f'            "assumption": "Assumes X...",\n'
+            f'            "category": "data",\n'
+            f'            "violation_risk": "high",\n'
+            f'            "evidence_quote": "code snippet",\n'
+            f'            "line_number": 42,\n'
+            f'            "consequences": "If violated, Y will happen...",\n'
+            f'            "recommendation": "Add explicit check for..."\n'
+            f"        }}\n"
+            f"    ]\n"
+            f"}}\n\n"
+            f"I will send files one at a time. For each file, analyze and return the JSON."
+        )
+
+    def parse_file_response(self, raw_response: str, file_path: str) -> list[Finding]:
+        """Parse LLM response for a single file in batch mode.
+
+        Reuses _parse_response() for JSON extraction and
+        _create_finding_from_assumption() for finding creation.
+
+        Args:
+            raw_response: Raw LLM response text for one file.
+            file_path: Path to the file that was analyzed.
+
+        Returns:
+            List of Finding objects extracted from the response.
+
+        """
+        try:
+            result = self._parse_response(raw_response)
+
+            findings: list[Finding] = []
+            finding_idx = 0
+
+            for assumption_data in result.assumptions:
+                confidence = risk_to_confidence(RiskLevel(assumption_data.violation_risk))
+                if confidence >= self._threshold:
+                    finding_idx += 1
+                    findings.append(
+                        self._create_finding_from_assumption(
+                            assumption_data, finding_idx, []
+                        )
+                    )
+
+            return findings
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.debug(
+                "Failed to parse batch file response for %s: %s", file_path, e
+            )
+            return []

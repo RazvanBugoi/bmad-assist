@@ -16,6 +16,8 @@ user_skill_level: expert              # expert to minimize LLM verbosity
 # Per-phase timeout configuration (seconds), for larger projects increase timeouts
 timeouts:
   default: 600                  # 10 m
+  retries: 3                    # NEW: retry provider invoke 3x on timeout (None=skip, 0=infinite)
+  create_story: 900             # 15 m
   validate_story_synthesis: 900 # 15 m
   dev_story: 3600               # 1 h
   code_review_synthesis: 1200   # 20 m
@@ -41,16 +43,16 @@ providers:
   # Additional providers for multi-provider scenarios
   multi:
     # Gemini providers
-    # - provider: gemini
-    #   model: gemini-3-pro-preview
+    - provider: gemini
+      model: gemini-3-pro-preview
     - provider: gemini
       model: gemini-3-flash-preview
     - provider: gemini
       model: gemini-2.5-flash
     - provider: gemini
       model: gemini-2.5-flash-lite
-    - provider: gemini
-      model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
     #   thinking: true
@@ -133,8 +135,8 @@ phase_models:
       model: gemini-2.5-flash
     - provider: gemini
       model: gemini-2.5-flash-lite
-    - provider: gemini
-      model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
     #   thinking: true
@@ -164,8 +166,8 @@ phase_models:
       model: gemini-2.5-flash
     - provider: gemini
       model: gemini-2.5-flash-lite
-    - provider: gemini
-      model: gemini-2.5-flash-lite
+    # - provider: gemini
+    #   model: gemini-2.5-flash-lite
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
     #   thinking: true
@@ -332,7 +334,7 @@ deep_verify:
 
   # Resource limits to prevent OOM and system instability
   resource_limits:
-    max_artifact_size_bytes: 102400   # 100KB max input size
+    max_artifact_size_bytes: 204800   # 200KB max input size
     max_line_count: 5000              # Max lines in artifact
     max_findings_per_method: 50       # Findings limit per method
     max_total_findings: 200           # Total findings limit
@@ -342,10 +344,10 @@ deep_verify:
   # Always-run methods (foundational)
   method_153_pattern_match:           # Regex pattern matching for vulnerabilities
     enabled: true
-    timeout_seconds: 60
+    timeout_seconds: 90
   method_154_boundary_analysis:       # Edge cases, off-by-one, null checks
     enabled: true
-    timeout_seconds: 60
+    timeout_seconds: 90
 
   # Conditional methods (run based on detected domains)
   method_155_assumption_surfacing:    # Hidden assumptions, race conditions (CONCURRENCY, API)
@@ -370,6 +372,7 @@ deep_verify:
 security_agent:
   enabled: true
   max_findings: 20
+  retries: 1          # Security agent only (None = no retry)
 
 notifications:
   enabled: true
