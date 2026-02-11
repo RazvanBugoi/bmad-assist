@@ -68,6 +68,7 @@ module = [
     "textstat",
     "playwright.*",
     "watchdog.*",
+    "questionary",
 ]
 ignore_missing_imports = true
 

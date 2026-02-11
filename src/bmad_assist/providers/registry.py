@@ -53,9 +53,9 @@ def _init_default_providers() -> None:
     from bmad_assist.providers.copilot import CopilotProvider
     from bmad_assist.providers.cursor_agent import CursorAgentProvider
     from bmad_assist.providers.gemini import GeminiProvider
+    from bmad_assist.providers.kilo import KiloProvider
     from bmad_assist.providers.kimi import KimiProvider
     from bmad_assist.providers.opencode import OpenCodeProvider
-    from bmad_assist.providers.kilo import KiloProvider
 
     # Use update() to preserve reference identity (not assignment)
     _REGISTRY.update(

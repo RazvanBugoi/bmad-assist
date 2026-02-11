@@ -121,7 +121,7 @@ class KiloProvider(BaseProvider):
 
         Returns:
             None - Kilo usually requires specifying a model or uses its own default.
-            
+
         """
         return "kilo/meta-llama/llama-3.3-70b-instruct:free"  # Reasonable default from kilo models
 
