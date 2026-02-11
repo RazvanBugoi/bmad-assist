@@ -53,7 +53,6 @@ def _init_default_providers() -> None:
     from bmad_assist.providers.copilot import CopilotProvider
     from bmad_assist.providers.cursor_agent import CursorAgentProvider
     from bmad_assist.providers.gemini import GeminiProvider
-    from bmad_assist.providers.kilo import KiloProvider
     from bmad_assist.providers.kimi import KimiProvider
     from bmad_assist.providers.opencode import OpenCodeProvider
 
@@ -69,7 +68,6 @@ def _init_default_providers() -> None:
             "gemini": GeminiProvider,
             "kimi": KimiProvider,
             "opencode": OpenCodeProvider,
-            "kilo": KiloProvider,
         }
     )
     logger.debug(

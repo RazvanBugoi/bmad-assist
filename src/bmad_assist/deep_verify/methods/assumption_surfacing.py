@@ -595,12 +595,13 @@ class AssumptionSurfacingMethod(BaseVerificationMethod):
         - JSON inside markdown code blocks (```json...```)
         - Raw JSON objects
         - Nested braces by tracking depth
+        - Partial/incomplete assumptions (filters them out with warnings)
 
         Args:
             raw_response: Raw text response from LLM.
 
         Returns:
-            Parsed AssumptionAnalysisResponse.
+            Parsed AssumptionAnalysisResponse with only complete assumptions.
 
         Raises:
             ValueError: If response cannot be parsed.
@@ -634,8 +635,40 @@ class AssumptionSurfacingMethod(BaseVerificationMethod):
                 else:
                     raise ValueError("No JSON found in response")
 
-        # Parse with Pydantic validation
+        # Parse JSON and filter incomplete assumptions BEFORE Pydantic validation
         data = json.loads(json_str)
+
+        # Filter out incomplete assumptions before Pydantic validation
+        required_fields = {"assumption", "category", "violation_risk", "evidence_quote"}
+        raw_assumptions = data.get("assumptions", [])
+        complete_assumptions = []
+
+        for idx, assumption in enumerate(raw_assumptions):
+            missing = [
+                f for f in required_fields
+                if f not in assumption or not assumption[f] or str(assumption[f]).strip() == ""
+            ]
+            if missing:
+                logger.warning(
+                    "Assumption #%d missing required fields %s - discarding incomplete data",
+                    idx,
+                    missing,
+                )
+            else:
+                complete_assumptions.append(assumption)
+
+        if len(raw_assumptions) > 0 and len(complete_assumptions) == 0:
+            logger.warning("All assumptions were incomplete - returning empty response")
+        elif len(complete_assumptions) < len(raw_assumptions):
+            logger.info(
+                "Filtered %d incomplete assumptions, %d complete assumptions remaining",
+                len(raw_assumptions) - len(complete_assumptions),
+                len(complete_assumptions),
+            )
+
+        # Update data with only complete assumptions
+        data["assumptions"] = complete_assumptions
+
         return AssumptionAnalysisResponse(**data)
 
     def _create_finding_from_assumption(

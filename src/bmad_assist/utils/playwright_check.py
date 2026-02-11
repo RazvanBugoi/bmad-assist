@@ -83,8 +83,7 @@ def check_playwright() -> PlaywrightStatus:
     try:
         from playwright._impl._driver import compute_driver_executable
 
-        driver_path, _ = compute_driver_executable()
-        driver_dir = Path(driver_path).parent
+        driver_dir = Path(compute_driver_executable()).parent
 
         # Browser executable patterns (Linux)
         browser_patterns = {

@@ -81,7 +81,6 @@ if TYPE_CHECKING:
     from .copilot import CopilotProvider as CopilotProvider
     from .cursor_agent import CursorAgentProvider as CursorAgentProvider
     from .gemini import GeminiProvider as GeminiProvider
-    from .kilo import KiloProvider as KiloProvider
     from .kimi import KimiProvider as KimiProvider
     from .opencode import OpenCodeProvider as OpenCodeProvider
 
@@ -100,7 +99,6 @@ __all__ = [
     "GeminiProvider",
     "KimiProvider",
     "OpenCodeProvider",
-    "KiloProvider",
     "ProviderResult",
     # Registry functions
     "denormalize_model_name",
@@ -136,7 +134,6 @@ _lazy_imports = {
     "GeminiProvider": ".gemini",
     "KimiProvider": ".kimi",
     "OpenCodeProvider": ".opencode",
-    "KiloProvider": ".kilo",
 }
 
 
