@@ -293,6 +293,8 @@ async def _invoke_validator(
     display_model: str | None = None,
     thinking: bool | None = None,
     reasoning_effort: str | None = None,
+    env_file: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
 ) -> tuple[str, ValidationOutput | None, DeterministicMetrics | None, str | None]:
     """Invoke a single validator using asyncio.to_thread.
 
@@ -321,6 +323,8 @@ async def _invoke_validator(
             If None, auto-detected from model name.
         reasoning_effort: Reasoning effort level for supported providers (codex).
             Valid values: minimal, low, medium, high, xhigh.
+        env_file: Optional provider-specific environment profile file (.env format).
+        env_overrides: Optional provider-specific environment overrides.
 
     Returns:
         Tuple of (provider_id, ValidationOutput or None, DeterministicMetrics or None,
@@ -349,6 +353,8 @@ async def _invoke_validator(
             display_model=display_model,
             thinking=thinking,
             reasoning_effort=reasoning_effort,
+            env_file=env_file,
+            env_overrides=env_overrides,
         )
 
         duration_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
@@ -563,6 +569,8 @@ async def run_validation_phase(
             display_model=multi_config.display_model,
             thinking=multi_config.thinking,
             reasoning_effort=multi_config.reasoning_effort,
+            env_file=multi_config.env_file_path,
+            env_overrides=dict(multi_config.env_overrides),
         )
         task = asyncio.create_task(delayed_invoke(delay, coro))
         tasks.append(task)
@@ -593,6 +601,8 @@ async def run_validation_phase(
             color_index=master_color_index,
             cwd=project_path,
             display_model=config.providers.master.display_model,
+            env_file=config.providers.master.env_file_path,
+            env_overrides=dict(config.providers.master.env_overrides),
         )
         master_task = asyncio.create_task(delayed_invoke(master_delay, master_coro))
         tasks.append(master_task)

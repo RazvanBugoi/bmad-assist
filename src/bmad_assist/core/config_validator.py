@@ -117,7 +117,10 @@ def validate_config_file(config_path: Path) -> list[ValidationResult]:
     # Check 4: Settings paths
     results.extend(_validate_settings_paths(config_data))
 
-    # Check 5: Pydantic schema
+    # Check 5: Env profile paths
+    results.extend(_validate_env_file_paths(config_data))
+
+    # Check 6: Pydantic schema
     results.extend(_validate_pydantic_schema(config_data, config_path))
 
     return results
@@ -337,6 +340,71 @@ def _validate_settings_paths(config_data: dict[str, Any]) -> list[ValidationResu
     helper = providers.get("helper", {})
     if isinstance(helper, dict):
         check_settings("providers.helper", helper)
+
+    return results
+
+
+def _validate_env_file_paths(config_data: dict[str, Any]) -> list[ValidationResult]:
+    """Validate env_file profile paths exist (with ~ expansion)."""
+    results: list[ValidationResult] = []
+
+    providers = config_data.get("providers", {})
+    if not isinstance(providers, dict):
+        return results
+
+    def check_env_file(field_path: str, provider_config: dict[str, Any]) -> None:
+        """Check env_file path for a provider config."""
+        if "env_file" not in provider_config:
+            return
+
+        env_file_str = provider_config["env_file"]
+        if not isinstance(env_file_str, str):
+            return
+
+        env_file = Path(env_file_str).expanduser()
+
+        if not env_file.exists():
+            results.append(
+                ValidationResult(
+                    status="warn",
+                    field_path=f"{field_path}.env_file",
+                    message=f"Env profile not found: {env_file}",
+                    suggestion="Create the env file or remove the 'env_file' field",
+                )
+            )
+        elif not env_file.is_file():
+            results.append(
+                ValidationResult(
+                    status="warn",
+                    field_path=f"{field_path}.env_file",
+                    message=f"Env profile path is not a file: {env_file}",
+                )
+            )
+        else:
+            results.append(
+                ValidationResult(
+                    status="ok",
+                    field_path=f"{field_path}.env_file",
+                    message=f"Env profile exists: {env_file}",
+                )
+            )
+
+    # Check master
+    master = providers.get("master", {})
+    if isinstance(master, dict):
+        check_env_file("providers.master", master)
+
+    # Check multi
+    multi = providers.get("multi", [])
+    if isinstance(multi, list):
+        for i, validator in enumerate(multi):
+            if isinstance(validator, dict):
+                check_env_file(f"providers.multi[{i}]", validator)
+
+    # Check helper
+    helper = providers.get("helper", {})
+    if isinstance(helper, dict):
+        check_env_file("providers.helper", helper)
 
     return results
 

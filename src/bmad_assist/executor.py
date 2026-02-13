@@ -188,6 +188,8 @@ def execute_qa_plan(
             prompt,
             model=config.providers.master.model,
             timeout=config.timeout * 3,  # Tests take longer
+            env_file=config.providers.master.env_file_path,
+            env_overrides=dict(config.providers.master.env_overrides),
         )
 
         if result.exit_code != 0:

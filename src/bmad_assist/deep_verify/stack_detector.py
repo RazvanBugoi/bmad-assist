@@ -134,6 +134,8 @@ def _detect_via_llm(
             settings_file=helper_config.settings_path,
             timeout=30,
             disable_tools=True,
+            env_file=helper_config.env_file_path,
+            env_overrides=dict(helper_config.env_overrides),
         )
     except Exception as e:
         logger.warning("LLM stack detection failed: %s", e)

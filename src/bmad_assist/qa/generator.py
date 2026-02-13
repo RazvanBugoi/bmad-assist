@@ -595,6 +595,8 @@ def _run_qa_plan_workflow(
             prompt,
             model=config.providers.master.model,
             timeout=config.timeout,
+            env_file=config.providers.master.env_file_path,
+            env_overrides=dict(config.providers.master.env_overrides),
         )
 
         if result.exit_code != 0:

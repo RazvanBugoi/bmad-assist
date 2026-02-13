@@ -210,12 +210,16 @@ class DeepVerifyEngine:
         dv_provider_config = self._config.provider
         settings_file: Path | None = None
         thinking: bool | None = None
+        env_file: Path | None = None
+        env_overrides: dict[str, str] | None = None
 
         if dv_provider_config is not None:
             provider = self._create_provider_from_dv_config(dv_provider_config)
             model = dv_provider_config.model
             settings_file = dv_provider_config.settings_path
             thinking = dv_provider_config.thinking or None  # False → None (omit)
+            env_file = dv_provider_config.env_file_path
+            env_overrides = dict(dv_provider_config.env_overrides)
             self._resolved_provider_name = f"deep_verify.provider ({dv_provider_config.provider})"
             logger.debug(
                 "Using deep_verify.provider override: %s/%s",
@@ -226,6 +230,8 @@ class DeepVerifyEngine:
             provider = self._create_provider_from_helper_config(self._helper_provider_config)
             model = self._helper_provider_config.model
             settings_file = self._helper_provider_config.settings_path
+            env_file = self._helper_provider_config.env_file_path
+            env_overrides = dict(self._helper_provider_config.env_overrides)
             self._resolved_provider_name = f"helper ({self._helper_provider_config.provider})"
             logger.debug(
                 "Using global helper provider: %s/%s",
@@ -246,6 +252,8 @@ class DeepVerifyEngine:
             provider,
             settings_file=settings_file,
             thinking=thinking,
+            env_file=env_file,
+            env_overrides=env_overrides,
         )
         return client, model
 

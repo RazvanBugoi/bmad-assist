@@ -24,12 +24,20 @@ timeouts:
   qa_remediate: 3600            # 1 h (LLM fixes + re-test)
   
 providers:
+  # Optional per-provider auth profile fields (all providers):
+  #   env_file: path to provider-specific .env file for account/profile isolation
+  #   env_overrides: key/value overrides applied only for that provider invocation
+  # If omitted, provider auth uses your existing environment setup as before.
+
   # Default provider used for single-LLM phases when no phase_models specified
   master:
     provider: claude
     model: opus
     # model_name: glm-4.7
     # settings: ~/.claude/glm.json
+    # env_file: .env.claude.primary
+    # env_overrides:
+    #   ANTHROPIC_BASE_URL: https://api.anthropic.com
 
   # Helper model for simple and fast tasks
   helper:
@@ -37,6 +45,7 @@ providers:
     model: haiku
     # model_name: glm-4.5
     # settings: ~/.claude/glm.json
+    # env_file: .env.claude.helper
 
   # Additional providers for multi-provider scenarios
   multi:
@@ -54,6 +63,21 @@ providers:
     # - provider: kimi
     #   model: kimi-code/kimi-for-coding
     #   thinking: true
+
+    # Codex providers with isolated auth profiles (supports 3+ entries)
+    # - provider: codex
+    #   model: gpt-5.1-codex-max
+    #   env_file: .env.codex.personal
+    # - provider: codex
+    #   model: o3-mini
+    #   env_file: .env.codex.work
+    #   env_overrides:
+    #     OPENAI_BASE_URL: https://api.openai.com/v1
+    # - provider: codex
+    #   model: o3-mini
+    #   model_name: codex-ci
+    #   env_overrides:
+    #     OPENAI_API_KEY: ${OPENAI_API_KEY_CI}
 
     # Claude subprocess providers
     - provider: claude

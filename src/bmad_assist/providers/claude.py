@@ -37,6 +37,7 @@ from bmad_assist.providers.base import (
     BaseProvider,
     ExitStatus,
     ProviderResult,
+    build_provider_environment,
     extract_tool_details,
     format_tag,
     is_full_stream,
@@ -259,6 +260,8 @@ class ClaudeSubprocessProvider(BaseProvider):
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
         reasoning_effort: str | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> ProviderResult:
         """Execute Claude Code CLI with the given prompt.
 
@@ -403,7 +406,13 @@ class ClaudeSubprocessProvider(BaseProvider):
                 command.extend(["--tools", ""])
 
         # Prepare environment (inherit current + optionally disable caching)
-        env = os.environ.copy()
+        env = build_provider_environment(
+            provider_name=self.provider_name,
+            model=effective_model,
+            cwd=cwd,
+            env_file=env_file,
+            env_overrides=env_overrides,
+        )
         if no_cache:
             env["DISABLE_PROMPT_CACHING"] = "1"
 

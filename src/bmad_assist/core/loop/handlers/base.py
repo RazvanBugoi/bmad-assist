@@ -643,11 +643,15 @@ class BaseHandler(ABC):
 
         # Resolve settings file from provider config (phase_models or global)
         settings_file = None
+        env_file = None
+        env_overrides: dict[str, str] | None = None
         provider_type = self._get_provider_type()
 
         # Helper bypasses phase_models
         if provider_type == "helper" and self.config.providers.helper:
             settings_file = self.config.providers.helper.settings_path
+            env_file = self.config.providers.helper.env_file_path
+            env_overrides = dict(self.config.providers.helper.env_overrides)
         else:
             # Use phase_models resolution for master and multi
             phase_config = self._get_phase_config()
@@ -655,9 +659,13 @@ class BaseHandler(ABC):
                 # Multi-LLM: use first provider
                 if phase_config:
                     settings_file = phase_config[0].settings_path
+                    env_file = phase_config[0].env_file_path
+                    env_overrides = dict(phase_config[0].env_overrides)
             else:
                 # Single-LLM: use directly
                 settings_file = phase_config.settings_path
+                env_file = phase_config.env_file_path
+                env_overrides = dict(phase_config.env_overrides)
 
         logger.info(
             "Invoking %s provider with model=%s, timeout=%s, cwd=%s",
@@ -669,6 +677,10 @@ class BaseHandler(ABC):
         logger.debug("Prompt length: %d chars", len(prompt))
         if settings_file:
             logger.debug("Using settings file: %s", settings_file)
+        if env_file:
+            logger.debug("Using env profile: %s", env_file)
+        if env_overrides:
+            logger.debug("Using env overrides: %d vars", len(env_overrides))
 
         # Get timeout retry configuration
         timeout_retries = get_phase_retries(self.config, self.phase_name)
@@ -709,6 +721,8 @@ class BaseHandler(ABC):
                     settings_file=settings_file,
                     cwd=self.project_path,
                     reasoning_effort=reasoning_effort,
+                    env_file=env_file,
+                    env_overrides=env_overrides,
                 )
 
             except ProviderExitCodeError as e:

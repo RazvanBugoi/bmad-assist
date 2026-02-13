@@ -22,6 +22,8 @@ class SecurityAgentProviderConfig(BaseModel):
         model: Model identifier for CLI invocation.
         model_name: Display name for the model in logs/reports.
         settings: Optional path to provider settings JSON file.
+        env_file: Optional provider-specific .env file.
+        env_overrides: Optional per-provider environment variable overrides.
         thinking: Enable thinking mode for supported providers.
         reasoning_effort: Reasoning effort level for supported providers.
 
@@ -45,6 +47,14 @@ class SecurityAgentProviderConfig(BaseModel):
         None,
         description="Path to provider settings JSON (tilde expanded)",
     )
+    env_file: str | None = Field(
+        None,
+        description="Path to provider env profile (.env, tilde expanded)",
+    )
+    env_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-provider environment variable overrides",
+    )
     thinking: bool = Field(
         False,
         description="Enable thinking mode for supported providers",
@@ -65,6 +75,13 @@ class SecurityAgentProviderConfig(BaseModel):
         if self.settings is None:
             return None
         return Path(self.settings).expanduser()
+
+    @property
+    def env_file_path(self) -> Path | None:
+        """Return expanded env profile path, or None if not set."""
+        if self.env_file is None:
+            return None
+        return Path(self.env_file).expanduser()
 
 
 class SecurityAgentConfig(BaseModel):

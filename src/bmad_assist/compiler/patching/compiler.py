@@ -234,6 +234,8 @@ def compile_patch(
     master_model = provider_config.model
     master_display_model = provider_config.model_name  # Human-readable name for logging
     master_settings = provider_config.settings_path
+    master_env_file = provider_config.env_file_path
+    master_env_overrides = dict(provider_config.env_overrides)
 
     logger.debug(
         "Compiling patch for %s using provider=%s, model=%s, display_model=%s, settings=%s",
@@ -271,6 +273,8 @@ def compile_patch(
             model=master_model,
             display_model=master_display_model,
             settings_file=master_settings,
+            env_file=master_env_file,
+            env_overrides=master_env_overrides,
         )
 
         try:

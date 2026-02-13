@@ -80,6 +80,8 @@ class PatchSession:
         display_model: str | None = None,
         timeout: int | None = None,
         settings_file: Path | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> None:
         """Initialize patch session.
 
@@ -91,6 +93,8 @@ class PatchSession:
             display_model: Human-readable model name for logging (e.g., "glm-4.7"). If None, uses model.
             timeout: Timeout in seconds. If None, uses config default.
             settings_file: Path to provider settings JSON file. If None, uses provider defaults.
+            env_file: Optional provider-specific environment profile file.
+            env_overrides: Optional provider-specific environment overrides.
 
         Raises:
             PatchError: If workflow_content is empty or instructions list is empty.
@@ -111,6 +115,8 @@ class PatchSession:
         self.display_model = display_model
         self.timeout = timeout or config.timeout
         self.settings_file = settings_file
+        self.env_file = env_file
+        self.env_overrides = env_overrides
         self.max_retries = config.max_retries
 
     def run(self) -> tuple[str, list[TransformResult]]:
@@ -139,14 +145,22 @@ class PatchSession:
 
                 # Single LLM call with tools disabled and no caching
                 # (one-shot prompt, cache overhead is wasteful)
+                invoke_kwargs: dict[str, object] = {
+                    "model": self.model,
+                    "display_model": self.display_model,
+                    "timeout": self.timeout,
+                    "settings_file": self.settings_file,
+                    "disable_tools": True,
+                    "no_cache": True,
+                }
+                if self.env_file is not None:
+                    invoke_kwargs["env_file"] = self.env_file
+                if self.env_overrides:
+                    invoke_kwargs["env_overrides"] = self.env_overrides
+
                 result = self.provider.invoke(
                     prompt,
-                    model=self.model,
-                    display_model=self.display_model,
-                    timeout=self.timeout,
-                    settings_file=self.settings_file,
-                    disable_tools=True,
-                    no_cache=True,
+                    **invoke_kwargs,
                 )
 
                 # Parse response

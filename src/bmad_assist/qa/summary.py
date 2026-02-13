@@ -154,6 +154,8 @@ def generate_summary(
         model=model_name,
         timeout=60,  # Short timeout for summary generation
         disable_tools=True,  # No tools needed for text generation
+        env_file=config.providers.helper.env_file_path,
+        env_overrides=dict(config.providers.helper.env_overrides),
     )
 
     if result.exit_code != 0:

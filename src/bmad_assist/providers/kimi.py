@@ -28,7 +28,6 @@ Example:
 
 import json
 import logging
-import os
 import random
 import threading
 import time
@@ -49,6 +48,7 @@ from bmad_assist.providers.base import (
     BaseProvider,
     ExitStatus,
     ProviderResult,
+    build_provider_environment,
     extract_tool_details,
     format_tag,
     is_full_stream,
@@ -449,6 +449,8 @@ class KimiProvider(BaseProvider):
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
         reasoning_effort: str | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> ProviderResult:
         """Execute kimi-cli with the given prompt using JSON streaming.
 
@@ -585,7 +587,13 @@ class KimiProvider(BaseProvider):
 
             try:
                 # Set up environment
-                env = os.environ.copy()
+                env = build_provider_environment(
+                    provider_name=self.provider_name,
+                    model=effective_model,
+                    cwd=cwd,
+                    env_file=env_file,
+                    env_overrides=env_overrides,
+                )
 
                 # Use Popen directly with cwd parameter (NO shell=True for security)
                 process = Popen(

@@ -25,6 +25,8 @@ class DeepVerifyProviderConfig(BaseModel):
         model_name: Display name for the model (e.g., "glm-4.5"). If set,
             used in logs/reports instead of model.
         settings: Optional path to provider settings JSON file (tilde expanded).
+        env_file: Optional provider-specific .env file.
+        env_overrides: Optional per-provider environment variable overrides.
         thinking: Enable thinking mode for supported providers (e.g., kimi).
 
     Example:
@@ -54,6 +56,14 @@ class DeepVerifyProviderConfig(BaseModel):
         None,
         description="Path to provider settings JSON (tilde expanded)",
     )
+    env_file: str | None = Field(
+        None,
+        description="Path to provider env profile (.env, tilde expanded)",
+    )
+    env_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-provider environment variable overrides",
+    )
     thinking: bool = Field(
         False,
         description="Enable thinking mode for supported providers (kimi)",
@@ -70,6 +80,13 @@ class DeepVerifyProviderConfig(BaseModel):
         if self.settings is None:
             return None
         return Path(self.settings).expanduser()
+
+    @property
+    def env_file_path(self) -> Path | None:
+        """Return expanded env profile path, or None if not set."""
+        if self.env_file is None:
+            return None
+        return Path(self.env_file).expanduser()
 
 
 class DeepVerifyContextConfig(BaseModel):

@@ -290,6 +290,8 @@ def _execute_single_run(
             model=config.providers.master.model,
             timeout=effective_timeout,
             settings_file=config.providers.master.settings_path,
+            env_file=config.providers.master.env_file_path,
+            env_overrides=dict(config.providers.master.env_overrides),
             # tools are enabled by default - Master needs Bash, Read, Write
         )
         stdout_content = result.stdout

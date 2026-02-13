@@ -328,6 +328,8 @@ class ATDDEligibilityDetector:
                 timeout=60,
                 disable_tools=True,
                 no_cache=True,
+                env_file=config.providers.helper.env_file_path,
+                env_overrides=dict(config.providers.helper.env_overrides),
             )
 
             response_text = provider.parse_output(result)

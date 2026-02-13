@@ -299,6 +299,8 @@ async def _invoke_reviewer(
     provider_name: str | None = None,
     thinking: bool | None = None,
     reasoning_effort: str | None = None,
+    env_file: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
 ) -> tuple[str, ValidationOutput | None, DeterministicMetrics | None, str | None]:
     """Invoke a single reviewer using asyncio.to_thread.
 
@@ -322,6 +324,8 @@ async def _invoke_reviewer(
             access files in the target project directory.
         display_model: Human-readable model name for progress output.
         reasoning_effort: Reasoning effort level for supported providers (codex).
+        env_file: Optional provider-specific environment profile file (.env format).
+        env_overrides: Optional provider-specific environment overrides.
 
     Returns:
         Tuple of (reviewer_id, ValidationOutput or None, DeterministicMetrics or None,
@@ -348,6 +352,8 @@ async def _invoke_reviewer(
             display_model=display_model,
             thinking=thinking,
             reasoning_effort=reasoning_effort,
+            env_file=env_file,
+            env_overrides=env_overrides,
         )
 
         duration_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
@@ -723,6 +729,8 @@ async def run_code_review_phase(
             provider_name=multi_config.provider,
             thinking=multi_config.thinking,
             reasoning_effort=multi_config.reasoning_effort,
+            env_file=multi_config.env_file_path,
+            env_overrides=dict(multi_config.env_overrides),
         )
         task = asyncio.create_task(delayed_invoke(delay, coro))
         tasks.append(task)
@@ -753,6 +761,8 @@ async def run_code_review_phase(
             cwd=project_path,
             display_model=config.providers.master.display_model,
             provider_name=config.providers.master.provider,
+            env_file=config.providers.master.env_file_path,
+            env_overrides=dict(config.providers.master.env_overrides),
         )
         master_task = asyncio.create_task(delayed_invoke(master_delay, master_coro))
         tasks.append(master_task)

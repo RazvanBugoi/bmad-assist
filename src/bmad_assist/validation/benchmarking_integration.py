@@ -440,11 +440,16 @@ async def _run_parallel_extraction(
     extraction_provider = "claude-subprocess"
     extraction_model = "haiku"
     extraction_settings_file = None
+    extraction_env_file = None
+    extraction_env_overrides: dict[str, str] | None = None
     if config is not None and config.providers.helper:
         extraction_provider = config.providers.helper.provider
         extraction_model = config.providers.helper.model
         settings_path = config.providers.helper.settings_path
         extraction_settings_file = str(settings_path) if settings_path else None
+        env_file_path = config.providers.helper.env_file_path
+        extraction_env_file = str(env_file_path) if env_file_path else None
+        extraction_env_overrides = dict(config.providers.helper.env_overrides)
 
     for idx, output in enumerate(successful_outputs):
         context = ExtractionContext(
@@ -456,6 +461,8 @@ async def _run_parallel_extraction(
             provider=extraction_provider,
             model=extraction_model,
             settings_file=extraction_settings_file,
+            env_file=extraction_env_file,
+            env_overrides=extraction_env_overrides,
         )
         # Staggered start: each task waits idx * delay before starting
         # Parse delay at runtime for each task (randomization per-call if range configured)

@@ -62,7 +62,15 @@ async def run_security_review(
 
     try:
         # Resolve provider
-        provider, model, settings_file, thinking, reasoning_effort = _resolve_provider(config)
+        (
+            provider,
+            model,
+            settings_file,
+            thinking,
+            reasoning_effort,
+            env_file,
+            env_overrides,
+        ) = _resolve_provider(config)
 
         logger.info(
             "Starting security review (provider=%s, model=%s, timeout=%ds)",
@@ -90,6 +98,8 @@ async def run_security_review(
                 disable_tools=True,
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
+                env_file=env_file,
+                env_overrides=env_overrides,
             ),
         )
 
@@ -161,11 +171,21 @@ async def run_security_review(
 
 def _resolve_provider(
     config: Config,
-) -> tuple[BaseProvider, str, Path | None, bool | None, str | None]:
+) -> tuple[
+    BaseProvider,
+    str,
+    Path | None,
+    bool | None,
+    str | None,
+    Path | None,
+    dict[str, str] | None,
+]:
     """Resolve provider from security_agent config or master fallback.
 
     Returns:
-        Tuple of (provider_instance, model, settings_file, thinking, reasoning_effort).
+        Tuple of
+        (provider_instance, model, settings_file, thinking, reasoning_effort,
+        env_file, env_overrides).
 
     """
     from bmad_assist.providers import get_provider
@@ -180,6 +200,8 @@ def _resolve_provider(
             pc.settings_path,
             pc.thinking if pc.thinking else None,
             pc.reasoning_effort,
+            pc.env_file_path,
+            dict(pc.env_overrides),
         )
 
     # Fallback to master provider
@@ -191,6 +213,8 @@ def _resolve_provider(
         master.settings_path,
         None,  # thinking
         None,  # reasoning_effort
+        master.env_file_path,
+        dict(master.env_overrides),
     )
 
 

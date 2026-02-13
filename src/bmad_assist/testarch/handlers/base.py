@@ -599,6 +599,8 @@ class TestarchBaseHandler(BaseHandler):
                 model=model,
                 timeout=timeout_val,
                 cwd=self.project_path,
+                env_file=self.config.providers.master.env_file_path,
+                env_overrides=dict(self.config.providers.master.env_overrides),
             )
         except CompilerError as e:
             logger.error("Compiler error: %s", e)

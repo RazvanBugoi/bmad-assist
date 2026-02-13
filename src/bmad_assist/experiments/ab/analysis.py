@@ -402,6 +402,8 @@ def generate_ab_analysis(
         timeout=ANALYSIS_TIMEOUT,
         settings_file=master.settings_path,
         disable_tools=True,
+        env_file=master.env_file_path,
+        env_overrides=dict(master.env_overrides),
     )
     analysis_text = provider.parse_output(result)
 

@@ -322,6 +322,8 @@ class TestBaseProviderAbstractMethods:
             "thinking",
             "cancel_token",
             "reasoning_effort",
+            "env_file",
+            "env_overrides",
         ]
 
         # Check prompt is positional
@@ -336,6 +338,8 @@ class TestBaseProviderAbstractMethods:
         assert sig.parameters["allowed_tools"].kind == inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["no_cache"].kind == inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["color_index"].kind == inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["env_file"].kind == inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["env_overrides"].kind == inspect.Parameter.KEYWORD_ONLY
 
         # Check defaults
         assert sig.parameters["model"].default is None
@@ -346,6 +350,8 @@ class TestBaseProviderAbstractMethods:
         assert sig.parameters["allowed_tools"].default is None
         assert sig.parameters["no_cache"].default is False
         assert sig.parameters["color_index"].default is None
+        assert sig.parameters["env_file"].default is None
+        assert sig.parameters["env_overrides"].default is None
 
         # Check return type
         assert sig.return_annotation == ProviderResult

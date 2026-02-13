@@ -41,6 +41,7 @@ Example:
 
 import contextlib
 import logging
+import os
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -48,6 +49,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
+
+from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
 
@@ -652,6 +655,83 @@ def validate_settings_file(
     return settings_file
 
 
+def build_provider_environment(
+    *,
+    provider_name: str,
+    model: str,
+    cwd: Path | None = None,
+    env_file: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build environment for provider subprocess execution.
+
+    Merges environment values in this precedence order:
+    1. Current process environment (os.environ)
+    2. Optional env_file values (.env format)
+    3. Optional env_overrides mapping
+
+    Missing/invalid env_file paths are non-fatal and log a warning.
+
+    Args:
+        provider_name: Provider name for logging context.
+        model: Model identifier for logging context.
+        cwd: Working directory used for resolving relative env_file paths.
+        env_file: Optional path to a provider-specific env profile file.
+        env_overrides: Optional key/value environment overrides.
+
+    Returns:
+        A merged environment mapping suitable for subprocess `env=...`.
+
+    """
+    merged_env = os.environ.copy()
+
+    if env_file is not None:
+        base_dir = cwd or Path.cwd()
+        path = env_file.expanduser()
+        if not path.is_absolute():
+            path = (base_dir / path).resolve()
+
+        if not path.exists():
+            logger.warning(
+                "Env profile not found, skipping: path=%s, provider=%s, model=%s",
+                path,
+                provider_name,
+                model,
+            )
+        elif not path.is_file():
+            logger.warning(
+                "Env profile path is not a file, skipping: path=%s, provider=%s, model=%s",
+                path,
+                provider_name,
+                model,
+            )
+        else:
+            loaded = dotenv_values(path)
+            for key, value in loaded.items():
+                if key and value is not None:
+                    merged_env[str(key)] = str(value)
+            logger.debug(
+                "Loaded env profile for provider: path=%s, provider=%s, model=%s, vars=%d",
+                path,
+                provider_name,
+                model,
+                len([k for k, v in loaded.items() if k and v is not None]),
+            )
+
+    if env_overrides:
+        for key, value in env_overrides.items():
+            if key:
+                merged_env[str(key)] = str(value)
+        logger.debug(
+            "Applied provider env overrides: provider=%s, model=%s, vars=%d",
+            provider_name,
+            model,
+            len(env_overrides),
+        )
+
+    return merged_env
+
+
 @dataclass(frozen=True)
 class ProviderResult:
     """Result of a CLI provider invocation.
@@ -771,6 +851,8 @@ class BaseProvider(ABC):
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
         reasoning_effort: str | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> ProviderResult:
         """Execute LLM provider with the given prompt.
 
@@ -810,6 +892,10 @@ class BaseProvider(ABC):
                 Valid values: minimal, low, medium, high, xhigh. Currently
                 only codex provider supports this via -c model_reasoning_effort.
                 Other providers should ignore.
+            env_file: Optional provider-specific environment file (.env format).
+                Useful for running multiple account profiles in one run.
+            env_overrides: Optional environment variable overrides applied
+                only for this invocation.
 
         Returns:
             ProviderResult containing stdout, stderr, exit code, and timing.

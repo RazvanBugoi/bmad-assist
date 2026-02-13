@@ -48,6 +48,7 @@ from bmad_assist.providers.base import (
     BaseProvider,
     ExitStatus,
     ProviderResult,
+    build_provider_environment,
     format_tag,
     is_full_stream,
     should_print_progress,
@@ -206,6 +207,8 @@ class CodexProvider(BaseProvider):
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
         reasoning_effort: str | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> ProviderResult:
         """Execute Codex CLI with the given prompt using JSON streaming.
 
@@ -323,6 +326,13 @@ class CodexProvider(BaseProvider):
             base_args.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
 
         command, temp_file = build_cross_platform_command("codex", base_args, prompt)
+        env = build_provider_environment(
+            provider_name=self.provider_name,
+            model=effective_model,
+            cwd=cwd,
+            env_file=env_file,
+            env_overrides=env_overrides,
+        )
 
         # For ProviderResult, store original command structure (without shell wrapper)
         original_command: tuple[str, ...] = (
@@ -361,6 +371,7 @@ class CodexProvider(BaseProvider):
                 encoding="utf-8",
                 errors="replace",
                 cwd=cwd,  # Use target project directory, not bmad-assist cwd
+                env=env,
                 start_new_session=True,  # Own process group for safe termination
             )
 

@@ -201,8 +201,27 @@ OpenAI's code-specialized models.
 providers:
   multi:
     - provider: codex
+      model: gpt-5.1-codex-max
+      env_file: .env.codex.personal
+    - provider: codex
       model: o3-mini
+      env_file: .env.codex.work
+      env_overrides:
+        OPENAI_BASE_URL: https://api.openai.com/v1
+    - provider: codex
+      model: o3-mini
+      model_name: codex-ci
+      env_overrides:
+        OPENAI_API_KEY: ${OPENAI_API_KEY_CI}
 ```
+
+### Multiple Account Profiles
+
+Use `env_file` and `env_overrides` per provider entry when running multiple Codex accounts/profiles in one workflow.
+
+- `env_file` loads a profile file for that provider entry only.
+- `env_overrides` applies last for that entry only (overrides process env and `env_file` values).
+- Both fields are optional; if omitted, existing auth behavior is unchanged.
 
 ### Models
 
@@ -357,6 +376,8 @@ All providers support these configuration options:
 | `model` | Yes | Model name passed to CLI |
 | `model_name` | No | Display name in logs/benchmarks (overrides model) |
 | `settings` | No | Path to settings file (claude-subprocess only) |
+| `env_file` | No | Path to provider-specific `.env` profile |
+| `env_overrides` | No | Per-provider environment variable overrides (`KEY: value`) |
 | `thinking` | No | Enable thinking mode (kimi only) |
 
 ---

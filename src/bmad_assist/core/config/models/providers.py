@@ -59,6 +59,8 @@ class MasterProviderConfig(BaseModel):
             used in logs/reports instead of model. Useful when "tricking"
             a CLI to use alternative models.
         settings: Optional path to provider settings JSON file (tilde expanded).
+        env_file: Optional provider-specific .env file for auth/profile isolation.
+        env_overrides: Optional per-provider environment variable overrides.
         reasoning_effort: Reasoning effort level for supported providers (codex).
             Valid values: minimal, low, medium, high, xhigh. If None, uses
             provider default.
@@ -87,6 +89,16 @@ class MasterProviderConfig(BaseModel):
         description="Path to provider settings JSON (tilde expanded)",
         json_schema_extra={"security": "dangerous"},
     )
+    env_file: str | None = Field(
+        None,
+        description="Path to provider env profile (.env, tilde expanded)",
+        json_schema_extra={"security": "dangerous"},
+    )
+    env_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-provider environment variable overrides",
+        json_schema_extra={"security": "dangerous"},
+    )
     reasoning_effort: str | None = Field(
         None,
         description="Reasoning effort for codex: minimal, low, medium, high, xhigh",
@@ -105,6 +117,13 @@ class MasterProviderConfig(BaseModel):
             return None
         return Path(self.settings).expanduser()
 
+    @property
+    def env_file_path(self) -> Path | None:
+        """Return expanded env profile path, or None if not set."""
+        if self.env_file is None:
+            return None
+        return Path(self.env_file).expanduser()
+
 
 class MultiProviderConfig(BaseModel):
     """Configuration for Multi LLM validator.
@@ -118,6 +137,8 @@ class MultiProviderConfig(BaseModel):
         model_name: Display name for the model (e.g., "glm-4.7"). If set,
             used in logs/reports instead of model.
         settings: Optional path to provider settings JSON file (tilde expanded).
+        env_file: Optional provider-specific .env file for auth/profile isolation.
+        env_overrides: Optional per-provider environment variable overrides.
         thinking: Enable thinking mode for supported providers (e.g., kimi).
             If None, auto-detected from model name.
         reasoning_effort: Reasoning effort level for supported providers (codex).
@@ -148,6 +169,16 @@ class MultiProviderConfig(BaseModel):
         description="Path to provider settings JSON (tilde expanded)",
         json_schema_extra={"security": "dangerous"},
     )
+    env_file: str | None = Field(
+        None,
+        description="Path to provider env profile (.env, tilde expanded)",
+        json_schema_extra={"security": "dangerous"},
+    )
+    env_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-provider environment variable overrides",
+        json_schema_extra={"security": "dangerous"},
+    )
     thinking: bool | None = Field(
         None,
         description="Enable thinking mode for supported providers (kimi). None=auto-detect.",
@@ -171,6 +202,13 @@ class MultiProviderConfig(BaseModel):
             return None
         return Path(self.settings).expanduser()
 
+    @property
+    def env_file_path(self) -> Path | None:
+        """Return expanded env profile path, or None if not set."""
+        if self.env_file is None:
+            return None
+        return Path(self.env_file).expanduser()
+
 
 class HelperProviderConfig(BaseModel):
     """Configuration for Helper LLM provider.
@@ -185,6 +223,8 @@ class HelperProviderConfig(BaseModel):
             used in logs/reports instead of model. Useful when "tricking"
             a CLI to use alternative models.
         settings: Optional path to provider settings JSON file (tilde expanded).
+        env_file: Optional provider-specific .env file for auth/profile isolation.
+        env_overrides: Optional per-provider environment variable overrides.
 
     """
 
@@ -210,6 +250,16 @@ class HelperProviderConfig(BaseModel):
         description="Path to provider settings JSON (tilde expanded)",
         json_schema_extra={"security": "dangerous"},
     )
+    env_file: str | None = Field(
+        None,
+        description="Path to provider env profile (.env, tilde expanded)",
+        json_schema_extra={"security": "dangerous"},
+    )
+    env_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-provider environment variable overrides",
+        json_schema_extra={"security": "dangerous"},
+    )
 
     @property
     def display_model(self) -> str:
@@ -222,6 +272,13 @@ class HelperProviderConfig(BaseModel):
         if self.settings is None:
             return None
         return Path(self.settings).expanduser()
+
+    @property
+    def env_file_path(self) -> Path | None:
+        """Return expanded env profile path, or None if not set."""
+        if self.env_file is None:
+            return None
+        return Path(self.env_file).expanduser()
 
 
 class ProviderConfig(BaseModel):
@@ -289,6 +346,7 @@ def parse_phase_models(raw: dict[str, object]) -> PhaseModelsConfig:
             except Exception as e:
                 raise ConfigError(f"Invalid config for phase '{phase_name}': {e}") from e
             _validate_settings_path(single_config.settings, phase_name)
+            _validate_env_file_path(single_config.env_file, phase_name)
             result[phase_name] = single_config
 
         else:
@@ -312,6 +370,7 @@ def parse_phase_models(raw: dict[str, object]) -> PhaseModelsConfig:
                         f"Invalid config for phase '{phase_name}' item {i}: {e}"
                     ) from e
                 _validate_settings_path(multi_config.settings, f"{phase_name}[{i}]")
+                _validate_env_file_path(multi_config.env_file, f"{phase_name}[{i}]")
                 configs.append(multi_config)
             result[phase_name] = configs
 
@@ -335,6 +394,16 @@ def _validate_settings_path(settings: str | None, context: str) -> None:
     expanded = Path(settings).expanduser()
     if not expanded.exists():
         raise ConfigError(f"Settings file not found: {settings} (in phase_models.{context})")
+
+
+def _validate_env_file_path(env_file: str | None, context: str) -> None:
+    """Validate env_file path exists if specified."""
+    if env_file is None:
+        return
+
+    expanded = Path(env_file).expanduser()
+    if not expanded.exists():
+        raise ConfigError(f"Env profile not found: {env_file} (in phase_models.{context})")
 
 
 def get_phase_provider_config(

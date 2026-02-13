@@ -31,7 +31,18 @@ providers:
     - provider: gemini
       model: gemini-2.5-flash
     - provider: codex
+      model: gpt-5.1-codex-max
+      env_file: .env.codex.personal
+    - provider: codex
       model: o3-mini
+      env_file: .env.codex.work
+      env_overrides:
+        OPENAI_BASE_URL: https://api.openai.com/v1
+    - provider: codex
+      model: o3-mini
+      model_name: codex-ci
+      env_overrides:
+        OPENAI_API_KEY: ${OPENAI_API_KEY_CI}
     - provider: claude-subprocess
       model: sonnet
       model_name: glm-4.7           # Display name in logs/reports
@@ -58,6 +69,10 @@ providers:
 | `model` | Yes | Model name passed to CLI |
 | `model_name` | No | Display name in logs/benchmarks |
 | `settings` | No | Path to settings file (claude-subprocess) |
+| `env_file` | No | Path to provider-specific `.env` profile for auth/account isolation |
+| `env_overrides` | No | Per-provider environment variable overrides (map of `KEY: value`) |
+
+`env_file` and `env_overrides` are optional. If omitted, provider auth continues to use your existing environment setup exactly as before.
 
 ## Per-Phase Model Configuration
 

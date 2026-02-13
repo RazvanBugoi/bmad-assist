@@ -146,6 +146,8 @@ class ExtractionContext:
         provider: LLM provider to use (default: claude).
         model: Model for extraction (default: haiku - fast/cheap).
         settings_file: Optional settings file path for custom provider config.
+        env_file: Optional provider-specific environment profile file.
+        env_overrides: Optional provider-specific environment overrides.
 
     """
 
@@ -158,6 +160,8 @@ class ExtractionContext:
     provider: str = "claude"
     model: str = "haiku"
     settings_file: str | None = None
+    env_file: str | None = None
+    env_overrides: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -520,13 +524,22 @@ async def extract_metrics_async(
 
             # Invoke LLM with allowed_tools=[] to prevent file modification
             settings_path = Path(context.settings_file) if context.settings_file else None
+            env_file_path = Path(context.env_file) if context.env_file else None
+            invoke_kwargs: dict[str, object] = {
+                "model": context.model,
+                "timeout": context.timeout_seconds,
+                "allowed_tools": [],  # Extraction is read-only
+            }
+            if settings_path is not None:
+                invoke_kwargs["settings_file"] = settings_path
+            if env_file_path is not None:
+                invoke_kwargs["env_file"] = env_file_path
+            if context.env_overrides:
+                invoke_kwargs["env_overrides"] = context.env_overrides
             result = await asyncio.to_thread(
                 provider.invoke,
                 retry_prompt,
-                model=context.model,
-                timeout=context.timeout_seconds,
-                settings_file=settings_path,
-                allowed_tools=[],  # Extraction is read-only
+                **invoke_kwargs,
             )
 
             if result.exit_code != 0:

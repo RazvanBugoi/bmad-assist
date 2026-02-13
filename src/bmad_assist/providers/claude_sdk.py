@@ -396,6 +396,8 @@ class ClaudeSDKProvider(BaseProvider):
         thinking: bool | None = None,
         cancel_token: threading.Event | None = None,
         reasoning_effort: str | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> ProviderResult:
         """Execute Claude Code SDK with the given prompt.
 
@@ -449,7 +451,7 @@ class ClaudeSDKProvider(BaseProvider):
 
         """
         # Ignored parameters (SDK doesn't support these)
-        _ = no_cache, color_index
+        _ = no_cache, color_index, env_file, env_overrides
         # Note: allowed_tools IS supported - passed to _invoke_async
         if disable_tools and allowed_tools is None:
             allowed_tools = []

@@ -519,6 +519,8 @@ def execute_batch(
             model=config.providers.master.model,
             timeout=timeout,
             settings_file=config.providers.master.settings_path,
+            env_file=config.providers.master.env_file_path,
+            env_overrides=dict(config.providers.master.env_overrides),
             # tools enabled by default - Master LLM needs Bash/Read/Write
         )
         stdout_content = result.stdout

@@ -102,6 +102,8 @@ class LLMClient:
         provider: BaseProvider,
         settings_file: Path | None = None,
         thinking: bool | None = None,
+        env_file: Path | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> None:
         """Initialize the LLM client.
 
@@ -110,12 +112,16 @@ class LLMClient:
             provider: The underlying provider to wrap.
             settings_file: Optional path to provider settings JSON file.
             thinking: Optional thinking mode flag for supported providers.
+            env_file: Optional provider-specific environment profile file.
+            env_overrides: Optional provider-specific environment overrides.
 
         """
         self.config = config
         self.provider = provider
         self._settings_file = settings_file
         self._thinking = thinking
+        self._env_file = env_file
+        self._env_overrides = env_overrides
 
         # Get LLM config (handle both new and old config structures)
         llm_config = getattr(config, "llm_config", None)
@@ -328,6 +334,10 @@ class LLMClient:
                     kwargs["settings_file"] = self._settings_file
                 if self._thinking is not None:
                     kwargs["thinking"] = self._thinking
+                if self._env_file is not None:
+                    kwargs["env_file"] = self._env_file
+                if self._env_overrides:
+                    kwargs["env_overrides"] = self._env_overrides
                 result = await loop.run_in_executor(
                     None,  # Default ThreadPoolExecutor
                     functools.partial(self.provider.invoke, **kwargs),
